@@ -1,0 +1,12 @@
+# ninja log v5
+0	2230	1765879440451166875	CMakeFiles/whisper.dir/whisper.cpp/ggml.c.o	5c79a98db137031d
+0	3157	1765879441355096589	CMakeFiles/whisper_flutter.dir/main.cpp.o	2b60801241676dd3
+0	5537	1765879443740977457	CMakeFiles/whisper.dir/whisper.cpp/whisper.cpp.o	b6a69eebd9c3c9e9
+5538	5620	1765879443850987000	libwhisper.a	e7d328f35006772
+5620	9486	1765879447708533823	/Users/ykylas/Downloads/qaznat_vt/build/whisper_flutter_new/intermediates/cxx/Release/491875n5/obj/x86_64/libwhisper.so	e5174fbcb2d00ae2
+4	5036	1765881415403164812	/Users/ykylas/Downloads/qaznat_vt/build/whisper_flutter_new/intermediates/cxx/Release/491875n5/obj/x86_64/libwhisper.so	e5174fbcb2d00ae2
+3	3421	1765884795641414898	/Users/ykylas/Downloads/qaznat_vt/build/whisper_flutter_new/intermediates/cxx/Release/491875n5/obj/x86_64/libwhisper.so	e5174fbcb2d00ae2
+4	2733	1765886757687262702	/Users/ykylas/Downloads/qaznat_vt/build/whisper_flutter_new/intermediates/cxx/Release/491875n5/obj/x86_64/libwhisper.so	e5174fbcb2d00ae2
+2	2951	1765890187238224200	/Users/ykylas/Downloads/qaznat_vt/build/whisper_flutter_new/intermediates/cxx/Release/491875n5/obj/x86_64/libwhisper.so	e5174fbcb2d00ae2
+2	2794	1765943960253574843	/Users/ykylas/Downloads/qaznat_vt/build/whisper_flutter_new/intermediates/cxx/Release/491875n5/obj/x86_64/libwhisper.so	e5174fbcb2d00ae2
+8	4986	1765989761474509702	/Users/ykylas/Downloads/qaznat_vt/build/whisper_flutter_new/intermediates/cxx/Release/491875n5/obj/x86_64/libwhisper.so	e5174fbcb2d00ae2

@@ -1,0 +1,17 @@
+Gradle start parameters:
+  tasks = []
+  excluded tasks = []
+  current dir = /Users/ykylas/Downloads/qaznat_vt/plugins/whisper_flutter_new/example/android
+  project properties args = []
+  system properties args = []
+
+Time metrics:
+  Total Gradle task time: 0.01 s
+
+
+
+No Kotlin task was run
+Task ':nothing' finished in 0.01 s
+Time metrics:
+  Total Gradle task time: 0.01 s
+

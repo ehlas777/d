@@ -1,0 +1,4 @@
+/Users/ykylas/Downloads/qaznat_vt/plugins/whisper_flutter_new/android/.cxx/Release/r72y2mu5/x86_64/CMakeFiles/whisper_flutter.dir
+/Users/ykylas/Downloads/qaznat_vt/plugins/whisper_flutter_new/android/.cxx/Release/r72y2mu5/x86_64/CMakeFiles/whisper.dir
+/Users/ykylas/Downloads/qaznat_vt/plugins/whisper_flutter_new/android/.cxx/Release/r72y2mu5/x86_64/CMakeFiles/edit_cache.dir
+/Users/ykylas/Downloads/qaznat_vt/plugins/whisper_flutter_new/android/.cxx/Release/r72y2mu5/x86_64/CMakeFiles/rebuild_cache.dir

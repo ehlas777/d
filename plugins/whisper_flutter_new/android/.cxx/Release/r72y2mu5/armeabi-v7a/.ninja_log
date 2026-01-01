@@ -1,0 +1,9 @@
+# ninja log v5
+1	1711	1765993037901186902	CMakeFiles/whisper.dir/whisper.cpp/ggml.c.o	41451a7ebf8c437a
+0	2494	1765993038681777601	CMakeFiles/whisper_flutter.dir/main.cpp.o	534db43a3adcbfdd
+1	4113	1765993040300356882	CMakeFiles/whisper.dir/whisper.cpp/whisper.cpp.o	54e5f442c84e3cff
+4118	4193	1765993040387055000	libwhisper.a	e7d328f35006772
+4193	6937	1765993043126119005	/Users/ykylas/Downloads/qaznat_vt/build/whisper_flutter_new/intermediates/cxx/Release/r72y2mu5/obj/armeabi-v7a/libwhisper.so	d2f591714c2d8d60
+4	3003	1766026716650385568	/Users/ykylas/Downloads/qaznat_vt/build/whisper_flutter_new/intermediates/cxx/Release/r72y2mu5/obj/armeabi-v7a/libwhisper.so	d2f591714c2d8d60
+3	3636	1766048631331495861	/Users/ykylas/Downloads/qaznat_vt/build/whisper_flutter_new/intermediates/cxx/Release/r72y2mu5/obj/armeabi-v7a/libwhisper.so	d2f591714c2d8d60
+3	4645	1766295752305006298	/Users/ykylas/Downloads/qaznat_vt/build/whisper_flutter_new/intermediates/cxx/Release/r72y2mu5/obj/armeabi-v7a/libwhisper.so	d2f591714c2d8d60

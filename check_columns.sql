@@ -1,0 +1,5 @@
+-- Subscriptions кестесінің БАРЛЫҚ бағандарын көру
+SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE
+FROM INFORMATION_SCHEMA.COLUMNS
+WHERE TABLE_NAME = 'Subscriptions'
+ORDER BY ORDINAL_POSITION;

@@ -1,0 +1,4 @@
+/Users/ykylas/.pub-cache/hosted/pub.dev/whisper_flutter_new-1.0.1/android/.cxx/Release/491875n5/armeabi-v7a/CMakeFiles/whisper_flutter.dir
+/Users/ykylas/.pub-cache/hosted/pub.dev/whisper_flutter_new-1.0.1/android/.cxx/Release/491875n5/armeabi-v7a/CMakeFiles/whisper.dir
+/Users/ykylas/.pub-cache/hosted/pub.dev/whisper_flutter_new-1.0.1/android/.cxx/Release/491875n5/armeabi-v7a/CMakeFiles/edit_cache.dir
+/Users/ykylas/.pub-cache/hosted/pub.dev/whisper_flutter_new-1.0.1/android/.cxx/Release/491875n5/armeabi-v7a/CMakeFiles/rebuild_cache.dir

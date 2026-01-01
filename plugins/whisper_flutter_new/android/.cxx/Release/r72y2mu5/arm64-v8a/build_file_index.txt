@@ -1,0 +1,1 @@
+/Users/ykylas/Downloads/qaznat_vt/plugins/whisper_flutter_new/src/CMakeLists.txt

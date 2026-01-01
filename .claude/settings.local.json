@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter analyze:*)",
+      "Bash(flutter run:*)",
+      "Bash(pkill:*)",
+      "Bash(flutter build:*)",
+      "Bash(flutter clean:*)",
+      "Bash(flutter pub get:*)",
+      "Bash(open:*)",
+      "Bash(find:*)",
+      "Bash(flutter pub:*)",
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(pod cache:*)",
+      "Bash(brew install:*)",
+      "Bash(nc:*)",
+      "Bash(curl:*)",
+      "Bash(dart run:*)",
+      "Bash(dotnet ef migrations add:*)",
+      "Bash(dotnet build:*)",
+      "Bash(dotnet ef database update:*)",
+      "Bash(dotnet ef migrations list:*)",
+      "Bash(dotnet ef migrations script:*)",
+      "Bash(ls:*)",
+      "Bash(pod install)",
+      "Bash(export LANG=en_US.UTF-8)",
+      "Bash(pod install:*)",
+      "Bash(flutter devices:*)",
+      "Bash(xcrun simctl:*)",
+      "Bash(security find-identity:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

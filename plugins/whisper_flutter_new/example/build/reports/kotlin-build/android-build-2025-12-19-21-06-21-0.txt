@@ -1,0 +1,13 @@
+Gradle start parameters:
+  tasks = []
+  excluded tasks = []
+  current dir = /Users/ykylas/Downloads/qaznat_vt/plugins/whisper_flutter_new/example/android
+  project properties args = []
+  system properties args = []
+
+
+
+
+No Kotlin task was run
+Task ':nothing' finished in 0.00 s
+
