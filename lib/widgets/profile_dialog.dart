@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../config/app_theme.dart';
 import '../l10n/app_localizations.dart';
 import '../providers/auth_provider.dart';
+import '../screens/subscription_screen.dart';
 
 class ProfileDialog extends StatelessWidget {
   const ProfileDialog({super.key});
@@ -305,6 +306,28 @@ class ProfileDialog extends StatelessWidget {
                   ),
                 ),
               const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: () {
+                   Navigator.of(context).pop(); 
+                   Navigator.push(
+                     context,
+                     MaterialPageRoute(
+                       builder: (context) => const SubscriptionScreen(),
+                     ),
+                   );
+                },
+                icon: const Icon(Icons.star),
+                label: Text(l10n.translate('get_subscription')),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primaryPurple,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
               ElevatedButton.icon(
                 onPressed: () {
                   authProvider.logout();

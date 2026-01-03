@@ -34,6 +34,7 @@ import '../services/api_client.dart';
 import '../services/backend_translation_service.dart';
 import '../models/translation_models.dart';
 import '../services/video_processing_service.dart';
+import 'subscription_screen.dart';
 
 enum TranscriptionState {
   idle,
@@ -1038,22 +1039,43 @@ class _HomeScreenState extends State<HomeScreen> {
                             ],
                           ),
                         ),
-                      ),
-                      Expanded(
-                        child: Consumer<ProjectProvider>(
-                          builder: (context, projectProvider, child) {
-                            return ProjectStepsTimeline(
-                              project: projectProvider.currentProject,
-                              onStepTap: (step) {
-                                Navigator.pop(context); // Close drawer
-                                _onStepTap(step, projectProvider);
-                              },
-                              isCollapsed: false,
-                            );
-                          },
-                        ),
-                      ),
-                    ],
+                       ),
+                       Expanded(
+                         child: Consumer<ProjectProvider>(
+                           builder: (context, projectProvider, child) {
+                             return ProjectStepsTimeline(
+                               project: projectProvider.currentProject,
+                               onStepTap: (step) {
+                                 Navigator.pop(context); // Close drawer
+                                 _onStepTap(step, projectProvider);
+                               },
+                               isCollapsed: false,
+                             );
+                           },
+                         ),
+                       ),
+                       // Subscription menu item
+                       Divider(color: AppTheme.borderColor),
+                       ListTile(
+                         leading: Icon(
+                           Icons.card_membership,
+                           color: AppTheme.primaryBlue,
+                         ),
+                         title: Text(
+                           'Subscription',
+                           style: TextStyle(color: AppTheme.textPrimary),
+                         ),
+                         onTap: () {
+                           Navigator.pop(context); // Close drawer
+                           Navigator.push(
+                             context,
+                             MaterialPageRoute(
+                               builder: (context) => const SubscriptionScreen(),
+                             ),
+                           );
+                         },
+                       ),
+                     ],
                   ),
                 ),
           body: Row(
@@ -1535,65 +1557,18 @@ class _HomeScreenState extends State<HomeScreen> {
       // Жеткілікті минуттар бар ма тексеру
       if (!authProvider.hasEnoughMinutes(videoDurationMinutes)) {
         if (mounted) {
-          final available = authProvider.totalRemainingMinutes;
-          await showDialog(
-            context: context,
-            builder: (context) => AlertDialog(
-              title: Row(
-                children: [
-                  const Icon(Icons.warning, color: AppTheme.warningColor),
-                  const SizedBox(width: 8),
-                  Text(AppLocalizations.of(context).translate('insufficient_minutes')),
-                ],
-              ),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    AppLocalizations.of(context).translate('minutes_required_message')
-                      .replaceAll('{0}', videoDurationMinutes.toStringAsFixed(1))
-                      .replaceAll('{1}', available.toStringAsFixed(1)),
-                  ),
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppTheme.warningColor.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: AppTheme.warningColor.withValues(alpha: 0.3)),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.info, color: AppTheme.warningColor, size: 20),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            AppLocalizations.of(context).translate('more_minutes_needed').replaceAll('{0}', (videoDurationMinutes - available).toStringAsFixed(1)),
-                            style: TextStyle(
-                              color: AppTheme.warningColor,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.of(context).pop(),
-                  child: Text(AppLocalizations.of(context).translate('close')),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.of(context).pop();
-                    // TODO: Абонемент бетіне өту
-                  },
-                  child: Text(AppLocalizations.of(context).translate('get_subscription')),
-                ),
-              ],
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(AppLocalizations.of(context).translate('insufficient_minutes')),
+              backgroundColor: AppTheme.warningColor,
+              duration: const Duration(seconds: 3),
+            ),
+          );
+
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+               builder: (context) => const SubscriptionScreen(),
             ),
           );
         }

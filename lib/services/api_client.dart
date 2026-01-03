@@ -1,10 +1,11 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'auth_interceptor.dart';
 
 class ApiClient {
- static const String baseUrl = 'http://localhost:5008';
- //static const String baseUrl = 'https://qaznat.kz';
+ //static const String baseUrl = 'http://localhost:5008';
+ static const String baseUrl = 'https://qaznat.kz';
 
   final Dio dio;
   final FlutterSecureStorage storage;
@@ -12,7 +13,9 @@ class ApiClient {
   // In-memory token storage (fallback for iOS Keychain issues)
   String? _memoryToken;
 
-  ApiClient()
+  final VoidCallback? onSessionExpired;
+
+  ApiClient({this.onSessionExpired})
     : dio = Dio(
         BaseOptions(
           baseUrl: baseUrl,
@@ -35,6 +38,7 @@ class ApiClient {
   }
 
   void _setupInterceptors() {
+    // Basic auth token interceptor
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) async {
@@ -45,15 +49,33 @@ class ApiClient {
           }
           return handler.next(options);
         },
-        onError: (error, handler) async {
-          // Handle 401 Unauthorized
-          if (error.response?.statusCode == 401) {
-            await clearToken();
-          }
-          return handler.next(error);
-        },
       ),
     );
+
+    // Session expiry / Auth interceptor
+    if (onSessionExpired != null) {
+      dio.interceptors.add(
+        AuthInterceptor(
+          dio: dio,
+          onSessionExpired: () async {
+            await clearToken();
+            onSessionExpired?.call();
+          },
+        ),
+      );
+    } else {
+        // Fallback if no callback provided (old behavior)
+        dio.interceptors.add(
+            InterceptorsWrapper(
+                onError: (error, handler) async {
+                    if (error.response?.statusCode == 401) {
+                        await clearToken();
+                    }
+                    return handler.next(error);
+                },
+            ),
+        );
+    }
   }
 
   // Token management with fallback to memory

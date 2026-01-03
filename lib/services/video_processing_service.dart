@@ -44,7 +44,7 @@ class VideoProcessingService {
   Future<VideoProcessingResult> prepareForTranslation({
     required String inputPath,
     double maxDurationSeconds = 60.0,
-    String watermarkText = 'QazNat VT',
+    String watermarkText = 'PolyDub',
   }) async {
     final duration = await getVideoDuration(inputPath);
     final shouldTrim = duration > maxDurationSeconds + 0.01;

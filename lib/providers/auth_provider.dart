@@ -10,11 +10,14 @@ class AuthProvider extends ChangeNotifier {
   bool _isLoggedIn = false;
   User? _userInfo;
 
-  final ApiClient apiClient = ApiClient();
-  late final AuthService _authService;
+  // We should access ApiClient via AuthService if needed, or pass it too.
+  // AuthService has apiClient.
+  final AuthService _authService;
+  
+  // Getter for apiClient if needed directly (though ideally we use authService)
+  ApiClient get apiClient => _authService.apiClient;
 
-  AuthProvider() {
-    _authService = AuthService(apiClient);
+  AuthProvider(this._authService) {
     _checkAuthStatus();
   }
 

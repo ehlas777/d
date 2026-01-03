@@ -45,10 +45,45 @@ class PaymentService {
   Future<List<SubscriptionPlan>> getSubscriptionPlans() async {
     try {
       final response = await apiClient.get('/api/payment/subscription/plans');
-      final List<dynamic> data = response.data['plans'];
-      return data.map((json) => SubscriptionPlan.fromJson(json)).toList();
-    } catch (e) {
-      throw Exception('Failed to load subscription plans: $e');
+      
+      // Check if response is HTML (indicates endpoint doesn't exist)
+      if (response.data is String && (response.data as String).contains('<html')) {
+        print('Backend subscription endpoint not implemented yet');
+        return [];
+      }
+      
+      print('Raw subscription response: ${response.data}');
+      
+      // Handle different response formats
+      final dynamic plansData = response.data is Map ? response.data['plans'] : response.data;
+      
+      if (plansData == null) {
+        print('No plans data found in response');
+        return [];
+      }
+      
+      if (plansData is! List) {
+        print('Plans data is not a list: $plansData');
+        return [];
+      }
+      
+      final List<dynamic> data = plansData as List<dynamic>;
+      print('Number of plans: ${data.length}');
+      
+      return data.map((json) {
+        try {
+          return SubscriptionPlan.fromJson(json as Map<String, dynamic>);
+        } catch (e) {
+          print('Error parsing plan: $json');
+          print('Parse error: $e');
+          rethrow;
+        }
+      }).toList();
+    } catch (e, stackTrace) {
+      print('Error in getSubscriptionPlans: $e');
+      print('Backend subscription endpoint may not be implemented yet');
+      // Return empty list instead of throwing to prevent app crash
+      return [];
     }
   }
 

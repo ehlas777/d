@@ -38,6 +38,7 @@ class SubscriptionPlan {
   final String currency;
   final String interval;
   final List<String> features;
+  final String? productId; // IAP product ID for iOS
 
   SubscriptionPlan({
     required this.id,
@@ -47,17 +48,19 @@ class SubscriptionPlan {
     required this.currency,
     required this.interval,
     required this.features,
+    this.productId,
   });
 
   factory SubscriptionPlan.fromJson(Map<String, dynamic> json) {
     return SubscriptionPlan(
-      id: json['id'],
-      name: json['name'],
-      description: json['description'],
-      price: (json['price'] as num).toDouble(),
-      currency: json['currency'],
-      interval: json['interval'],
+      id: json['id'] ?? (json['tierName'] as String?)?.toLowerCase() ?? 'unknown',
+      name: json['name'] ?? json['tierName'] ?? 'Unknown Plan',
+      description: json['description'] ?? '',
+      price: (json['price'] ?? json['monthlyPrice'] ?? 0.0).toDouble(),
+      currency: json['currency'] ?? 'USD',
+      interval: json['interval'] ?? 'month',
       features: List<String>.from(json['features'] ?? []),
+      productId: json['productId'],
     );
   }
 }
@@ -70,6 +73,7 @@ class Subscription {
   final DateTime currentPeriodEnd;
   final bool cancelAtPeriodEnd;
   final SubscriptionPlan? plan;
+  final String? platform; // 'ios', 'android', 'web', etc.
 
   Subscription({
     required this.id,
@@ -79,6 +83,7 @@ class Subscription {
     required this.currentPeriodEnd,
     required this.cancelAtPeriodEnd,
     this.plan,
+    this.platform,
   });
 
   factory Subscription.fromJson(Map<String, dynamic> json) {
@@ -90,6 +95,7 @@ class Subscription {
       currentPeriodEnd: DateTime.parse(json['currentPeriodEnd']),
       cancelAtPeriodEnd: json['cancelAtPeriodEnd'] ?? false,
       plan: json['plan'] != null ? SubscriptionPlan.fromJson(json['plan']) : null,
+      platform: json['platform'],
     );
   }
 }
@@ -99,12 +105,14 @@ class PaymentResult {
   final String? message;
   final String? subscriptionId;
   final String? transactionId;
+  final String? receiptData; // IAP receipt data
 
   PaymentResult({
     required this.success,
     this.message,
     this.subscriptionId,
     this.transactionId,
+    this.receiptData,
   });
 
   factory PaymentResult.fromJson(Map<String, dynamic> json) {
@@ -113,6 +121,7 @@ class PaymentResult {
       message: json['message'],
       subscriptionId: json['subscriptionId'],
       transactionId: json['transactionId'],
+      receiptData: json['receiptData'],
     );
   }
 }

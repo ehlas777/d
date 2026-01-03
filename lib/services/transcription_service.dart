@@ -148,7 +148,7 @@ class TranscriptionService {
     final client = HttpClient()..connectionTimeout = _downloadConnectTimeout;
     try {
       final request = await client.getUrl(uri);
-      request.headers.set(HttpHeaders.userAgentHeader, 'qaznat_vt');
+      request.headers.set(HttpHeaders.userAgentHeader, 'polydub');
       final response = await request.close();
 
       if (response.statusCode != 200) {

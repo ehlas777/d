@@ -41,6 +41,7 @@ class _MergePanelState extends State<MergePanel> {
   String? _splitVideoDirectory;
   String? _mergedVideoDirectory;
   String? _finalVideoPath;
+  bool _videoFileExists = false; // Track if video file actually exists
   Uint8List? _thumbnailBytes;
   double _speedMultiplier = 1.0;
   final VideoSplitterService _splitterService = VideoSplitterService();
@@ -377,22 +378,31 @@ end tell
         await File(originalPath).copy(targetPath);
       }
 
+      // Verify the file actually exists
+      final fileExists = await File(targetPath).exists();
+
       if (mounted) {
         setState(() {
           _finalVideoPath = targetPath;
+          _videoFileExists = fileExists;
         });
       } else {
         _finalVideoPath = targetPath;
+        _videoFileExists = fileExists;
       }
 
-      await _generateThumbnail(targetPath);
+      if (fileExists) {
+        await _generateThumbnail(targetPath);
+      }
     } catch (_) {
       if (mounted) {
         setState(() {
           _finalVideoPath = originalPath;
+          _videoFileExists = false; // Set to false on error
         });
       } else {
         _finalVideoPath = originalPath;
+        _videoFileExists = false;
       }
     }
   }
@@ -497,6 +507,7 @@ end tell
       _splitVideoDirectory = null;
       _mergedVideoDirectory = null;
       _finalVideoPath = null;
+      _videoFileExists = false; // Reset video existence flag
       _thumbnailBytes = null;
     });
 
@@ -736,7 +747,7 @@ end tell
         const SizedBox(height: 24),
 
         // Батырмалар панелі (тек финалдық видео дайын болғанда)
-        if (_finalVideoPath != null)
+        if (_videoFileExists && _finalVideoPath != null)
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
