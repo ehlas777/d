@@ -43,6 +43,7 @@ class _TranslationPanelState extends State<TranslationPanel> {
   double _progress = 0.0;
   final Map<int, TextEditingController> _editControllers = {};
   bool _hasUnsavedChanges = false;
+  bool _isAutomatic = false; // Автоматты аударма режимі
   
   // Sequential translation with retry support
   List<SegmentState>? _segmentStates;
@@ -626,6 +627,58 @@ class _TranslationPanelState extends State<TranslationPanel> {
           },
         ),
         const SizedBox(height: 12),
+
+        // Автоматты режим checkbox
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          decoration: BoxDecoration(
+            color: AppTheme.primaryColor.withValues(alpha: 0.05),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: AppTheme.accentColor.withValues(alpha: 0.2),
+            ),
+          ),
+          child: CheckboxListTile(
+            title: Row(
+              children: [
+                const Icon(Icons.auto_awesome, size: 18, color: AppTheme.accentColor),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Text(
+                        'Автоматты режим',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 13,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        'Аударма + TTS + Видео өңдеу (5X жылдамырақ)',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            value: _isAutomatic,
+            onChanged: _isTranslating ? null : (value) {
+              setState(() {
+                _isAutomatic = value ?? false;
+              });
+            },
+            controlAffinity: ListTileControlAffinity.leading,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            dense: true,
+          ),
+        ),
 
         // Info box - компактная версия
         Container(

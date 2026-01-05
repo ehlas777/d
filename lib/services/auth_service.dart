@@ -107,6 +107,16 @@ class AuthService {
     }
   }
 
+  Future<bool> deleteAccount() async {
+    try {
+      final response = await apiClient.delete('/api/user/profile');
+      return response.statusCode == 200 || response.statusCode == 204;
+    } catch (e) {
+      print('Error deleting account: $e');
+      return false;
+    }
+  }
+
   // Пайдаланушы минуттар ақпаратын алу
   Future<User?> getUserMinutesInfo({
     required String searchQuery,

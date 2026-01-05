@@ -6,12 +6,20 @@ class JsonViewer extends StatefulWidget {
   final TranscriptionResult result;
   final VoidCallback? onDownload;
   final Future<void> Function(String targetLanguage)? onTranslate;
+  
+  // Automatic translation
+  final bool? isAutomaticMode;
+  final ValueChanged<bool>? onAutomaticModeChanged;
+  final List<String>? automaticLogs;
 
   const JsonViewer({
     super.key,
     required this.result,
     this.onDownload,
     this.onTranslate,
+    this.isAutomaticMode,
+    this.onAutomaticModeChanged,
+    this.automaticLogs,
   });
 
   @override
@@ -45,6 +53,9 @@ class _JsonViewerState extends State<JsonViewer> with SingleTickerProviderStateM
           result: _translatedResult ?? widget.result,
           onSave: widget.onDownload,
           onTranslate: widget.onTranslate,
+          isAutomaticMode: widget.isAutomaticMode,
+          onAutomaticModeChanged: widget.onAutomaticModeChanged,
+          automaticLogs: widget.automaticLogs,
         ),
       ],
     );

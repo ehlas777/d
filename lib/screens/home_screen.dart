@@ -34,6 +34,13 @@ import '../services/api_client.dart';
 import '../services/backend_translation_service.dart';
 import '../models/translation_models.dart';
 import '../services/video_processing_service.dart';
+import '../services/openai_tts_service.dart';
+import '../services/video_splitter_service.dart';
+import '../services/automatic_translation_orchestrator.dart';
+import '../services/auto_translation_storage.dart';
+import '../services/throttled_queue.dart';
+import '../services/network_resilience_handler.dart';
+import '../services/storage_manager.dart';
 import 'subscription_screen.dart';
 
 enum TranscriptionState {
@@ -75,12 +82,20 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final _transcriptionService = TranscriptionService();
   final _videoProcessingService = VideoProcessingService();
+  final _videoSplitter = VideoSplitterService();
   bool _isInitialized = false;
+  
+  // Automatic translation
+  bool _useAutomaticMode = true; // Default: automatic mode enabled
+  final List<String> _automaticLogs = [];
+  AutomaticTranslationOrchestrator? _orchestrator;
+  String? _finalVideoPath; // Completed video path
 
   @override
   void initState() {
     super.initState();
     _initializeWhisper();
+    _initializeOrchestrator();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkForIncompleteProjects();
       _checkTrialStatus();
@@ -333,6 +348,25 @@ class _HomeScreenState extends State<HomeScreen> {
             'Please download the model file. See WHISPER_LOCAL_SETUP.md';
       });
     }
+  }
+
+  void _initializeOrchestrator() async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final token = await authProvider.apiClient.getToken();
+    
+    _orchestrator = AutomaticTranslationOrchestrator(
+      transcriptionService: _transcriptionService,
+      translationService: BackendTranslationService(authProvider.apiClient),
+      ttsService: OpenAiTtsService(
+        baseUrl: ApiClient.baseUrl,
+        authToken: token ?? '',
+      ),
+      videoSplitter: _videoSplitter,
+      storage: AutoTranslationStorage(),
+      apiQueue: ThrottledQueue(maxConcurrent: 3),
+      networkHandler: NetworkResilienceHandler(),
+      storageManager: StorageManager(),
+    );
   }
 
   /// Trial статусын тексеру (тек аутентификацияланбаған пайдаланушылар үшін)
@@ -1345,12 +1379,125 @@ class _HomeScreenState extends State<HomeScreen> {
             result: _result!,
             onDownload: _downloadJson,
             onTranslate: _runInlineTranslation,
+            isAutomaticMode: _useAutomaticMode,
+            onAutomaticModeChanged: (value) {
+              setState(() => _useAutomaticMode = value);
+            },
+            automaticLogs: _automaticLogs,
           ),
         ),
       );
       children.add(const SizedBox(height: 24));
 
       // Next-step prompt handled via floating action button; no extra wide button here.
+    }
+
+    // Final video download card (show after automatic translation completes)
+    if (_finalVideoPath != null && File(_finalVideoPath!).existsSync()) {
+      children.add(
+        AppTheme.card(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: AppTheme.accentColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.video_file,
+                        color: AppTheme.accentColor,
+                        size: 32,
+                      ),
+                    ),
+                    const SizedBox(width: 16),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Аяқталған Видео',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Автоматты аударма аяқталды',
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 14,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 20),
+                // Play Preview Button
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () => _playFinalVideo(_finalVideoPath!),
+                    icon: const Icon(Icons.play_circle_outline, size: 28),
+                    label: const Text('Видеоны Қарау'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppTheme.primaryBlue,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 20),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: () => _saveFinalVideo(_finalVideoPath!),
+                        icon: const Icon(Icons.download),
+                        label: const Text('Видеоны Сақтау'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.accentColor,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    ElevatedButton.icon(
+                      onPressed: () => _openVideoInFinder(_finalVideoPath!),
+                      icon: const Icon(Icons.folder_open),
+                      label: const Text('Finder-де Ашу'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.grey[700],
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      );
+      children.add(const SizedBox(height: 24));
     }
 
     // Translation UI hidden in this flow (handled inline above the editor)
@@ -1540,6 +1687,110 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _runInlineTranslation(String targetLanguage) async {
     if (_result == null || _isTranslating) return;
 
+    // If automatic mode is enabled, use orchestrator pipeline
+    if (_useAutomaticMode && _orchestrator != null && _selectedFile != null) {
+      setState(() {
+        _isTranslating = true;
+        _automaticLogs.clear();
+        _automaticLogs.add('[INFO] Automatic mode activated');
+      });
+
+      try {
+        final videoFile = File(_selectedFile!.path!);
+        
+        // Get TTS settings from SharedPreferences
+        final prefs = await SharedPreferences.getInstance();
+        final voice = prefs.getString('tts_voice') ?? 'alloy';
+        final speed = prefs.getDouble('video_speed') ?? 1.2;
+        
+        _automaticLogs.add('[INFO] Voice: $voice');
+        _automaticLogs.add('[INFO] Video speed: ${speed}x');
+        _automaticLogs.add('[INFO] Starting parallel pipeline...');
+        
+        final result = await _orchestrator!.processAutomatic(
+          videoFile: videoFile,
+          targetLanguage: targetLanguage,
+          voice: voice,
+          existingTranscriptionResult: _result, // Pass existing transcription
+          onProgress: (progress) {
+            if (mounted) {
+              setState(() {
+                _automaticLogs.add('[${progress.stage.name}] ${progress.currentActivity}');
+              });
+            }
+          },
+        );
+        
+        if (mounted) {
+          setState(() {
+            _automaticLogs.add('✓ Automatic translation pipeline complete!');
+            _automaticLogs.add('Final video: ${result.finalVideoPath ?? "N/A"}');
+            _finalVideoPath = result.finalVideoPath;
+            _isTranslating = false;
+            _useAutomaticMode = false; // Hide monitor after completion
+          });
+
+          // Calculate total TTS audio duration for logging
+          final authProvider = Provider.of<AuthProvider>(context, listen: false);
+          final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+          
+          if (authProvider.isLoggedIn) {
+            // Calculate total TTS duration from all segments
+            double totalTtsDuration = 0.0;
+            for (final segment in result.segments) {
+              if (segment.audioPath != null) {
+                try {
+                  final audioFile = File(segment.audioPath!);
+                  if (await audioFile.exists()) {
+                    // Get audio duration using VideoSplitterService helper
+                    final duration = await _videoSplitter.getAudioDuration(segment.audioPath!);
+                    totalTtsDuration += duration;
+                  }
+                } catch (e) {
+                  print('Warning: Could not get duration for ${segment.audioPath}: $e');
+                }
+              }
+            }
+
+            final ttsDurationMinutes = totalTtsDuration / 60.0;
+            
+            if (mounted) {
+              setState(() {
+                _automaticLogs.add('[INFO] Total TTS duration: ${ttsDurationMinutes.toStringAsFixed(2)} minutes');
+              });
+            }
+
+            // Update project with completion status
+            if (projectProvider.currentProject != null) {
+              await projectProvider.updateCurrentProject(
+                projectProvider.currentProject!.copyWith(
+                  currentStep: ProjectStep.completed,
+                ),
+              );
+            }
+            
+            await _incrementCompletedTranslations();
+          }
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _automaticLogs.add('✗ Error: $e');
+            _isTranslating = false;
+          });
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Automatic translation failed: $e'),
+              backgroundColor: AppTheme.errorColor,
+            ),
+          );
+        }
+      }
+      return; // Exit early, don't run manual translation
+    }
+
+    // Manual translation mode (existing logic)
     final authProvider = Provider.of<AuthProvider>(
       context,
       listen: false,
@@ -2519,5 +2770,82 @@ class _HomeScreenState extends State<HomeScreen> {
       createdAt: sourceResult.createdAt,
       segments: updatedSegments,
     );
+  }
+
+  /// Save final video to user-selected location
+  Future<void> _saveFinalVideo(String sourcePath) async {
+    try {
+      final result = await FilePicker.platform.saveFile(
+        dialogTitle: 'Видеоны Сақтау',
+        fileName: 'translated_video_${DateTime.now().millisecondsSinceEpoch}.mp4',
+        type: FileType.video,
+      );
+
+      if (result != null) {
+        final sourceFile = File(sourcePath);
+        await sourceFile.copy(result);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✅ Видео сәтті сақталды!'),
+              backgroundColor: AppTheme.successColor,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Видео сақтау қатесі: $e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Play/preview final video using system default player
+  Future<void> _playFinalVideo(String filePath) async {
+    try {
+      if (Platform.isMacOS) {
+        await Process.run('open', [filePath]);
+      } else {
+        // For other platforms
+        await Process.run('xdg-open', [filePath]);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Видео ашу қатесі: $e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    }
+  }
+
+  /// Open video file in Finder (macOS)
+  Future<void> _openVideoInFinder(String filePath) async {
+    try {
+      if (Platform.isMacOS) {
+        await Process.run('open', ['-R', filePath]);
+      } else {
+        // For other platforms, just open the containing directory
+        final directory = File(filePath).parent.path;
+        await Process.run('open', [directory]);
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Finder ашу қатесі: $e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    }
   }
 }

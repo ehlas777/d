@@ -10,9 +10,9 @@ class BackendTranslationService {
   BackendTranslationService(this.apiClient);
 
   static const Duration _defaultTimeout = Duration(minutes: 5);
-  static const Duration _mediumTimeout = Duration(minutes: 10);
-  static const Duration _longTimeout = Duration(minutes: 15);
-  static const Duration _maxTimeout = Duration(minutes: 20);
+  static const Duration _mediumTimeout = Duration(minutes: 15);
+  static const Duration _longTimeout = Duration(minutes: 20);
+  static const Duration _maxTimeout = Duration(minutes: 30);
   static const int _segmentChunkSize = 500;
   static const int _maxCharsPerRequest = 20000;
 

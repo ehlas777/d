@@ -16,27 +16,34 @@ class VideoSplitterService {
   ///
   /// [videoPath] - түпнұсқа видео файлының жолы
   /// [segments] - transcript сегменттері
+  /// [outputDir] - Optional: output directory жолы. Болмаса timestamp қолданылады.
   /// [onProgress] - прогресс callback функциясы (0.0 - 1.0)
   ///
   /// Қайтарады: бөлінген видео файлдары сақталған каталогтың жолын
   Future<String> splitVideoBySegments({
     required String videoPath,
     required List<TranscriptionSegment> segments,
+    String? outputDir,
     required Function(double progress) onProgress,
   }) async {
     // Шығыс каталогын жасау
-    final appDir = await getApplicationDocumentsDirectory();
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final outputDir = Directory('${appDir.path}/split_videos/$timestamp');
+    final Directory outDir;
+    if (outputDir != null) {
+      outDir = Directory(outputDir);
+    } else {
+      final appDir = await getApplicationDocumentsDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      outDir = Directory('${appDir.path}/split_videos/$timestamp');
+    }
 
-    if (!await outputDir.exists()) {
-      await outputDir.create(recursive: true);
+    if (!await outDir.exists()) {
+      await outDir.create(recursive: true);
     }
 
     // Әр сегмент үшін видео кесу
     for (int i = 0; i < segments.length; i++) {
       final segment = segments[i];
-      final outputPath = '${outputDir.path}/segment_${i + 1}.mp4';
+      final outputPath = '${outDir.path}/segment_${i + 1}.mp4';
 
       // FFmpeg командасын орындау
       await _splitVideoSegment(
@@ -50,7 +57,7 @@ class VideoSplitterService {
       onProgress((i + 1) / segments.length);
     }
 
-    return outputDir.path;
+    return outDir.path;
   }
 
   /// FFmpeg қолдану арқылы видеоны кесу
@@ -117,6 +124,7 @@ class VideoSplitterService {
   /// [splitVideoDir] - бөлінген видео файлдары бар каталог
   /// [audioDir] - TTS аудио файлдары бар каталог
   /// [segments] - транскрипция сегменттері
+  /// [outputDir] - Optional: output directory жолы. Болмаса timestamp қолданылады.
   /// [onProgress] - прогресс callback функциясы (0.0 - 1.0)
   ///
   /// Қайтарады: біріктірілген видео файлдары сақталған каталогтың жолын
@@ -124,22 +132,28 @@ class VideoSplitterService {
     required String splitVideoDir,
     required String audioDir,
     required List<TranscriptionSegment> segments,
+    String? outputDir,
     required Function(double progress) onProgress,
   }) async {
     // Шығыс каталогын жасау
-    final appDir = await getApplicationDocumentsDirectory();
-    final timestamp = DateTime.now().millisecondsSinceEpoch;
-    final outputDir = Directory('${appDir.path}/merged_videos/$timestamp');
+    final Directory outDir;
+    if (outputDir != null) {
+      outDir = Directory(outputDir);
+    } else {
+      final appDir = await getApplicationDocumentsDirectory();
+      final timestamp = DateTime.now().millisecondsSinceEpoch;
+      outDir = Directory('${appDir.path}/merged_videos/$timestamp');
+    }
 
-    if (!await outputDir.exists()) {
-      await outputDir.create(recursive: true);
+    if (!await outDir.exists()) {
+      await outDir.create(recursive: true);
     }
 
     // Әр сегмент үшін видео мен аудионы біріктіру
     for (int i = 0; i < segments.length; i++) {
       final videoPath = '$splitVideoDir/segment_${i + 1}.mp4';
       final audioPath = '$audioDir/segment_${i + 1}.mp3';
-      final outputPath = '${outputDir.path}/merged_${i + 1}.mp4';
+      final outputPath = '${outDir.path}/merged_${i + 1}.mp4';
 
       // Файлдардың бар екенін тексеру
       if (!await File(videoPath).exists()) {
@@ -169,7 +183,7 @@ class VideoSplitterService {
       onProgress((i + 1) / segments.length);
     }
 
-    return outputDir.path;
+    return outDir.path;
   }
 
   /// Бір сегментті аудиомен біріктіру және синхрондау
@@ -185,7 +199,19 @@ class VideoSplitterService {
     // speedRatio > 1.0 = видео ұзағырақ, видеоны FAST FORWARD (тездету)
     // speedRatio < 1.0 = видео қысқарақ, видеоны SLOW MOTION (баяулату)
     // speedRatio = 1.0 = синхронды, өзгеріс қажет емес
-    // АУДИОНЫ ЖЫЛДАМДЫҒЫ ӨЗГЕРМЕЙДІ!
+    
+    // Log parameters for debugging
+    print('Merging segment:');
+    print('  Video: $videoPath');
+    print('  Audio: $audioPath');
+    print('  Ratio: $speedRatio');
+
+    if (speedRatio.isInfinite || speedRatio.isNaN || speedRatio <= 0) {
+       print('⚠️ Invalid speedRatio: $speedRatio. Defaulting to 1.0');
+       // This likely means audioDuration is 0. 
+       // We should arguably throw or handle gracefully. 
+       // For now, let's not crash here but FFmpeg might fail if we generate bad filter.
+    }
 
     final escapedVideo = _escapePath(videoPath);
     final escapedAudio = _escapePath(audioPath);
@@ -197,12 +223,16 @@ class VideoSplitterService {
     ];
 
     // Видео жылдамдығын реттеу (setpts = slow motion/fast forward)
-    if ((speedRatio - 1.0).abs() > 0.01) {
+    // Check for valid, finite speedRatio
+    if ((speedRatio - 1.0).abs() > 0.01 && speedRatio.isFinite && speedRatio > 0) {
       // setpts: PTS multiplier < 1.0 = fast forward, > 1.0 = slow motion
       final ptsMultiplier = 1.0 / speedRatio;
+      
+      // Ensure dot separator for double
+      final ptsStr = ptsMultiplier.toStringAsFixed(6);
 
       ffmpegArgs.addAll([
-        '-filter_complex', '[0:v]setpts=$ptsMultiplier*PTS[v]',
+        '-filter_complex', '[0:v]setpts=$ptsStr*PTS[v]',
         '-map', '[v]',
         '-map', '1:a:0',
       ]);
@@ -226,12 +256,23 @@ class VideoSplitterService {
     ]);
 
     final command = ffmpegArgs.join(' ');
+    print('Running FFmpeg: $command'); // Log the command
+
     final session = await FFmpegKit.execute(command);
     final returnCode = await session.getReturnCode();
 
     if (!ReturnCode.isSuccess(returnCode)) {
       final output = await session.getOutput();
-      throw Exception('FFmpeg біріктіру қатесі: $output');
+      final logs = await session.getLogs();
+      final logContent = logs.map((l) => l.getMessage()).join('\n');
+      
+      // Get last few lines of log for meaningful error
+      final errorSnippet = logContent.length > 500 
+          ? logContent.substring(logContent.length - 500) 
+          : logContent;
+          
+      print('FFmpeg FAILURE LOG:\n$logContent'); // Print full log to console
+      throw Exception('FFmpeg merged failed: $errorSnippet');
     }
   }
 

@@ -154,33 +154,43 @@ class PlatformPaymentRouter {
   }) async {
     print('Subscribing to plan: $planId (platform: $platformName)');
     
-    if (shouldUseIAP && iapService != null) {
-      // Use IAP for iOS/Android
-      try {
-        // Use the IAP product ID if provided, otherwise use planId
-        final productId = iapProductId ?? planId;
-        print('Initiating IAP purchase for product: $productId');
-        
-        final success = await iapService!.purchaseSubscription(productId);
-        return PaymentResult(
-          success: success,
-          message: success 
-              ? 'Subscription purchase initiated. Please complete the purchase.'
-              : 'Failed to initiate subscription purchase',
-        );
-      } catch (e) {
-        print('IAP purchase error: $e');
+    if (shouldUseIAP) {
+      if (iapService != null) {
+        // Use IAP for iOS/Android
+        try {
+          // Use the IAP product ID if provided, otherwise use planId
+          final productId = iapProductId ?? planId;
+          print('Initiating IAP purchase for product: $productId');
+          
+          final success = await iapService!.purchaseSubscription(productId);
+          return PaymentResult(
+            success: success,
+            message: success 
+                ? 'Subscription purchase initiated. Please complete the purchase.'
+                : 'Failed to initiate subscription purchase',
+          );
+        } catch (e) {
+          print('IAP purchase error: $e');
+          return PaymentResult(
+            success: false,
+            message: 'Purchase error: $e',
+          );
+        }
+      } else {
         return PaymentResult(
           success: false,
-          message: 'Purchase error: $e',
+          message: 'In-App Purchase service not initialized',
         );
       }
     } else {
-      // Use web payment service for desktop/web
-      print('Using web payment service (not implemented yet)');
+      // For web/desktop without IAP, we cannot offer subscriptions currently
+      // to remain compliant with App Store guidelines if this code is shared.
+      // If this is a purely web build, different logic applies, but for
+      // the shared codebase delivered to App Store, we must be strict.
+      
       return PaymentResult(
         success: false,
-        message: 'Web payment not yet implemented. Please use mobile app.',
+        message: 'Subscriptions are currently only available on mobile devices.',
       );
     }
   }
@@ -223,7 +233,7 @@ class PlatformPaymentRouter {
       print('Restoring purchases for $platformName...');
       await iapService!.restorePurchases();
     } else {
-      print('Restore purchases is only available on iOS/Android');
+      print('Restore purchases is only available on supported platforms');
     }
   }
 

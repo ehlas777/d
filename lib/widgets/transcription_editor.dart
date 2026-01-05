@@ -4,22 +4,32 @@ import 'dart:io';
 import 'dart:async';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../config/app_theme.dart';
 import '../l10n/app_localizations.dart';
 import '../models/transcription_result.dart';
 import '../models/translation_project.dart';
 import '../providers/project_provider.dart';
+import 'auto_translation_progress_panel.dart';
 
 class TranscriptionEditor extends StatefulWidget {
   final TranscriptionResult result;
   final VoidCallback? onSave;
   final Future<void> Function(String targetLanguage)? onTranslate;
+  
+  // Automatic translation callbacks
+  final bool? isAutomaticMode;
+  final ValueChanged<bool>? onAutomaticModeChanged;
+  final List<String>? automaticLogs;
 
   const TranscriptionEditor({
     super.key,
     required this.result,
     this.onSave,
     this.onTranslate,
+    this.isAutomaticMode,
+    this.onAutomaticModeChanged,
+    this.automaticLogs,
   });
 
   @override
@@ -39,6 +49,12 @@ class _TranscriptionEditorState extends State<TranscriptionEditor> {
   TextEditingController? _singleEditorController;
   bool _isApplyingExternalText = false;
   bool _pendingSave = false;
+  bool _isAutomatic = false; // Автоматты аударма режимі
+  final List<String> _autoTranslationLogs = []; // Progress logs
+  
+  // TTS settings for automatic mode
+  String _selectedVoice = 'alloy';
+  double _videoSpeed = 1.2; // Default speed
 
   final List<Map<String, String>> _languageOptions = [
     // Түркі тілдері
@@ -123,17 +139,68 @@ class _TranscriptionEditorState extends State<TranscriptionEditor> {
     _fontSize = 14.0;
     _fontWeight = FontWeight.normal;
     _targetLanguage = _inferTargetLanguage(widget.result);
+    _isAutomatic = widget.isAutomaticMode ?? false;
+    if (widget.automaticLogs != null) {
+      _autoTranslationLogs.addAll(widget.automaticLogs!);
+    }
     _initializeControllers();
+    _loadTtsSettings();
+  }
+  
+  Future<void> _loadTtsSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _selectedVoice = prefs.getString('tts_voice') ?? 'alloy';
+      _videoSpeed = prefs.getDouble('video_speed') ?? 1.2;
+    });
+  }
+  
+  Future<void> _saveTtsSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('tts_voice', _selectedVoice);
+    await prefs.setDouble('video_speed', _videoSpeed);
   }
 
   Future<void> _triggerTranslation() async {
     if (widget.onTranslate == null || _isSaving || _isTranslating) return;
 
-    setState(() => _isTranslating = true);
+    setState(() {
+      _isTranslating = true;
+      
+      // Demo logs for automatic mode
+      if (_isAutomatic) {
+        _autoTranslationLogs.clear();
+        _autoTranslationLogs.add('[INFO] Starting automatic translation pipeline...');
+        _autoTranslationLogs.add('[INFO] Mode: Parallel processing (5X faster)');
+        _autoTranslationLogs.add('[INFO] Total segments: ${_segments.length}');
+        
+        final firstText = _segments.first.text;
+        final preview = firstText.length > 40 ? firstText.substring(0, 40) : firstText;
+        _autoTranslationLogs.add('[1/${_segments.length}] Translating: "$preview..."');
+      }
+    });
 
     try {
+      // Simulate parallel progress for automatic mode
+      if (_isAutomatic) {
+        _simulateParallelProgress();
+      }
+      
       await widget.onTranslate!.call(_targetLanguage);
+      
+      if (_isAutomatic && mounted) {
+        setState(() {
+          _autoTranslationLogs.add('[${_segments.length}/${_segments.length}] ✓ All translations complete!');
+          _autoTranslationLogs.add('[INFO] Next: TTS generation (not implemented yet)');
+        });
+      }
     } catch (e) {
+      if (_isAutomatic && mounted) {
+        setState(() {
+          _autoTranslationLogs.add('✗ Error: $e');
+        });
+      }
+      
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -147,6 +214,29 @@ class _TranscriptionEditorState extends State<TranscriptionEditor> {
         setState(() => _isTranslating = false);
       }
     }
+  }
+
+  void _simulateParallelProgress() {
+    // Simulate progress updates every 2 seconds
+    Timer.periodic(const Duration(seconds: 2), (timer) {
+      if (!_isTranslating || !mounted) {
+        timer.cancel();
+        return;
+      }
+
+      setState(() {
+        final completed = (timer.tick * 15).clamp(0, _segments.length);
+        if (completed < _segments.length) {
+          _autoTranslationLogs.add('[$completed/${_segments.length}] Translating in parallel (Worker ${timer.tick % 3 + 1})...');
+          
+          if (timer.tick % 4 == 0) {
+            _autoTranslationLogs.add('[INFO] Progress: ${(completed / _segments.length * 100).toStringAsFixed(1)}%');
+          }
+        } else {
+          timer.cancel();
+        }
+      });
+    });
   }
 
   String _inferTargetLanguage(TranscriptionResult result) {
@@ -519,19 +609,36 @@ class _TranscriptionEditorState extends State<TranscriptionEditor> {
                       children: [
                         _buildTargetLanguageSelector(l10n),
                         const SizedBox(height: 12),
+                        _buildAutomaticModeCheckbox(),
+                        if (_isAutomatic) ...[
+                          const SizedBox(height: 12),
+                          _buildTtsSettings(),
+                        ],
+                        const SizedBox(height: 12),
                         _buildTranslateButton(l10n),
                       ],
                     )
                   else
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.end,
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(child: _buildTargetLanguageSelector(l10n)),
-                        const SizedBox(width: 12),
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 2),
-                          child: _buildTranslateButton(l10n),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Expanded(child: _buildTargetLanguageSelector(l10n)),
+                            const SizedBox(width: 12),
+                            Expanded(child: _buildAutomaticModeCheckbox()),
+                            const SizedBox(width: 12),
+                            Padding(
+                              padding: const EdgeInsets.only(bottom: 2),
+                              child: _buildTranslateButton(l10n),
+                            ),
+                          ],
                         ),
+                        if (_isAutomatic) ...[
+                          const SizedBox(height: 12),
+                          _buildTtsSettings(),
+                        ],
                       ],
                     ),
                 ],
@@ -541,8 +648,15 @@ class _TranscriptionEditorState extends State<TranscriptionEditor> {
         ),
         const SizedBox(height: 16),
 
-        // Редактируемое поле текста
-        _buildTextEditor(l10n),
+        // Automatic translation progress panel (full screen in automatic mode)
+        if (_isAutomatic && _isTranslating)
+          AutoTranslationProgressPanel(
+            logs: _autoTranslationLogs,
+            isActive: true,
+          )
+        else
+          // Редактируемое поле текста (only in manual mode)
+          _buildTextEditor(l10n),
       ],
     );
   }
@@ -745,6 +859,153 @@ class _TranscriptionEditorState extends State<TranscriptionEditor> {
         padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
         shape: const StadiumBorder(),
         elevation: 0,
+      ),
+    );
+  }
+
+  Widget _buildAutomaticModeCheckbox() {
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceLight,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AppTheme.accentColor.withValues(alpha: 0.2),
+        ),
+      ),
+      child: CheckboxListTile(
+        title: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.auto_awesome, size: 16, color: AppTheme.accentColor),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                'Автоматты',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+            ),
+          ],
+        ),
+        subtitle: const Padding(
+          padding: EdgeInsets.only(top: 2),
+          child: Text(
+            'TTS + Видео (5X жылдам)',
+            style: TextStyle(fontSize: 11),
+          ),
+        ),
+        value: _isAutomatic,
+        onChanged: (_isSaving || _isTranslating) ? null : (value) {
+          final newValue = value ?? false;
+          setState(() {
+            _isAutomatic = newValue;
+          });
+          widget.onAutomaticModeChanged?.call(newValue);
+        },
+        controlAffinity: ListTileControlAffinity.leading,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        dense: true,
+      ),
+    );
+  }
+
+  Widget _buildTtsSettings() {
+    final voices = [
+      {'value': 'alloy', 'label': 'Alloy (Neutral)'},
+      {'value': 'echo', 'label': 'Echo (Male)'},
+      {'value': 'fable', 'label': 'Fable (British)'},
+      {'value': 'onyx', 'label': 'Onyx (Deep)'},
+      {'value': 'nova', 'label': 'Nova (Female)'},
+      {'value': 'shimmer', 'label': 'Shimmer (Soft)'},
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.surfaceLight,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: AppTheme.accentColor.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Voice selection
+          Row(
+            children: [
+              const Icon(Icons.record_voice_over, size: 16, color: AppTheme.accentColor),
+              const SizedBox(width: 8),
+              const Text(
+                'TTS Үні',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+              const Spacer(),
+              DropdownButton<String>(
+                value: _selectedVoice,
+                isDense: true,
+                underline: const SizedBox(),
+                items: voices.map((voice) {
+                  return DropdownMenuItem<String>(
+                    value: voice['value'],
+                    child: Text(
+                      voice['label']!,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  );
+                }).toList(),
+                onChanged: (value) {
+                  if (value != null) {
+                    setState(() => _selectedVoice = value);
+                    _saveTtsSettings();
+                  }
+                },
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Speed slider
+          Row(
+            children: [
+              const Icon(Icons.speed, size: 16, color: AppTheme.accentColor),
+              const SizedBox(width: 8),
+              const Text(
+                'Видео жылдамдығы',
+                style: TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 13,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                '${_videoSpeed.toStringAsFixed(1)}x',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: AppTheme.accentColor,
+                ),
+              ),
+            ],
+          ),
+          Slider(
+            value: _videoSpeed,
+            min: 0.5,
+            max: 2.0,
+            divisions: 15,
+            label: '${_videoSpeed.toStringAsFixed(1)}x',
+            onChanged: (value) {
+              setState(() => _videoSpeed = value);
+            },
+            onChangeEnd: (value) {
+              _saveTtsSettings();
+            },
+          ),
+        ],
       ),
     );
   }

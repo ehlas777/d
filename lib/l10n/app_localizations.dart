@@ -260,6 +260,14 @@ class AppLocalizations {
       'feature_30min': '30 минут/күн тегін аудару',
       'feature_hd_quality': 'HD сапасы',
       'feature_extra': 'Қосымша мүмкіндіктер',
+
+      // Account Deletion
+      'delete_account': 'Аккаунтты өшіру',
+      'delete_account_confirmation_title': 'Аккаунтты өшіру',
+      'delete_account_confirmation_message': 'Сіз өз аккаунтыңызды өшіргіңіз келетініне сенімдісіз бе? Бұл әрекетті қайтару мүмкін емес және барлық деректеріңіз жойылады.',
+      'delete': 'Өшіру',
+      'delete_account_success': 'Аккаунт сәтті өшірілді',
+      'delete_account_error': 'Аккаунтты өшіру қатесі',
     },
     'ru_RU': {
       // Navigation & Actions
@@ -483,6 +491,14 @@ class AppLocalizations {
       'feature_30min': '30 минут/день бесплатного перевода',
       'feature_hd_quality': 'HD качество',
       'feature_extra': 'Дополнительные функции',
+
+      // Account Deletion
+      'delete_account': 'Удалить аккаунт',
+      'delete_account_confirmation_title': 'Удалить аккаунт',
+      'delete_account_confirmation_message': 'Вы уверены, что хотите удалить свой аккаунт? Это действие необратимо, и все ваши данные будут удалены.',
+      'delete': 'Удалить',
+      'delete_account_success': 'Аккаунт успешно удален',
+      'delete_account_error': 'Ошибка удаления аккаунта',
     },
     'en_US': {
       // Navigation & Actions
@@ -706,6 +722,14 @@ class AppLocalizations {
       'feature_30min': '30 minutes/day free translation',
       'feature_hd_quality': 'HD quality',
       'feature_extra': 'Extra features',
+
+      // Account Deletion
+      'delete_account': 'Delete Account',
+      'delete_account_confirmation_title': 'Delete Account',
+      'delete_account_confirmation_message': 'Are you sure you want to delete your account? This action is irreversible and all your data will be deleted.',
+      'delete': 'Delete',
+      'delete_account_success': 'Account successfully deleted',
+      'delete_account_error': 'Error deleting account',
     },
     'tr_TR': {
       // Navigation & Actions
@@ -856,6 +880,14 @@ class AppLocalizations {
       'save_to_photos': 'Fotoğraflar\'a kaydet',
       'final_video_speed': 'Son video hızı',
       'open': 'Aç',
+
+      // Account Deletion
+      'delete_account': 'Hesabı Sil',
+      'delete_account_confirmation_title': 'Hesabı Sil',
+      'delete_account_confirmation_message': 'Hesabınızı silmek istediğinizden emin misiniz? Bu işlem geri alınamaz ve tüm verileriniz silinecektir.',
+      'delete': 'Sil',
+      'delete_account_success': 'Hesap başarıyla silindi',
+      'delete_account_error': 'Hesap silme hatası',
     },
     'uz_UZ': {
       'choose_language': 'Tilni tanlang',
@@ -1005,6 +1037,14 @@ class AppLocalizations {
       'save_to_photos': 'Rasmlarga saqlash',
       'final_video_speed': 'Yakuniy video tezligi',
       'open': 'Ochish',
+
+      // Account Deletion
+      'delete_account': 'Hisobni o\'chirish',
+      'delete_account_confirmation_title': 'Hisobni o\'chirish',
+      'delete_account_confirmation_message': 'Hisobingizni o\'chirishni xohlaysizmi? Bu harakatni bekor qilib bo\'lmaydi va barcha ma\'lumotlaringiz o\'chiriladi.',
+      'delete': 'O\'chirish',
+      'delete_account_success': 'Hisob muvaffaqiyatli o\'chirildi',
+      'delete_account_error': 'Hisobni o\'chirish xatosi',
     },
 
     'zh_CN': {
@@ -1126,6 +1166,14 @@ class AppLocalizations {
       'save_to_photos': '保存到相册',
       'final_video_speed': '最终视频速度',
       'open': '打开',
+
+      // Account Deletion
+      'delete_account': '删除账户',
+      'delete_account_confirmation_title': '删除账户',
+      'delete_account_confirmation_message': '您确定要删除您的账户吗？此操作不可逆，您的所有数据将被删除。',
+      'delete': '删除',
+      'delete_account_success': '账户已成功删除',
+      'delete_account_error': '删除账户错误',
     },
 
     'ar_SA': {
@@ -1270,6 +1318,14 @@ class AppLocalizations {
       'save_to_photos': 'حفظ في الصور',
       'final_video_speed': 'سرعة الفيديو النهائية',
       'open': 'فتح',
+
+      // Account Deletion
+      'delete_account': 'حذف الحساب',
+      'delete_account_confirmation_title': 'حذف الحساب',
+      'delete_account_confirmation_message': 'هل أنت متأكد أنك تريد حذف حسابك؟ هذا الإجراء لا يمكن التراجع عنه وسيتم حذف جميع بياناتك.',
+      'delete': 'حذف',
+      'delete_account_success': 'تم حذف الحساب بنجاح',
+      'delete_account_error': 'خطأ في حذف الحساب',
     },
 
   };
@@ -1307,6 +1363,15 @@ class AppLocalizations {
   String get orClickToSelect => translate('or_click_to_select');
   String get supportedFormats => translate('supported_formats');
   String get maxFileSize => translate('max_file_size');
+
+  // Account Deletion
+  String get deleteAccount => translate('delete_account');
+  String get deleteAccountConfirmationTitle => translate('delete_account_confirmation_title');
+  String get deleteAccountConfirmationMessage => translate('delete_account_confirmation_message');
+  String get delete => translate('delete');
+  String get deleteAccountSuccess => translate('delete_account_success');
+  String get deleteAccountError => translate('delete_account_error');
+  String get cancel => translate('cancel');
 }
 
 class _AppLocalizationsDelegate

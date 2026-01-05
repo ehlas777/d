@@ -172,6 +172,14 @@ class AuthProvider extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<bool> deleteAccount() async {
+    final success = await _authService.deleteAccount();
+    if (success) {
+      await logout();
+    }
+    return success;
+  }
+
   // Пайдаланушы минуттар ақпаратын жаңарту
   Future<void> refreshUserMinutes() async {
     final searchQuery = (_email?.trim().isNotEmpty == true)

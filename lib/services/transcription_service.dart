@@ -271,7 +271,7 @@ class TranscriptionService {
         isSpecialTokens: false,
         isNoTimestamps: !options.timestamps,
         nProcessors: 1,
-        splitOnWord: true,
+        splitOnWord: false,
         noFallback: false,
         diarize: options.speakerDiarization,
         speedUp: false,

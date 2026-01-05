@@ -350,6 +350,87 @@ class ProfileDialog extends StatelessWidget {
                   ),
                 ),
               ),
+              const SizedBox(height: 12),
+              TextButton.icon(
+                onPressed: () async {
+                  final confirmed = await showDialog<bool>(
+                    context: context,
+                    builder: (context) => AlertDialog(
+                      title: Text(l10n.deleteAccountConfirmationTitle),
+                      content: Text(l10n.deleteAccountConfirmationMessage),
+                      actions: [
+                        TextButton(
+                          onPressed: () => Navigator.of(context).pop(false),
+                          child: Text(l10n.cancel),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => Navigator.of(context).pop(true),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppTheme.errorColor,
+                            foregroundColor: Colors.white,
+                          ),
+                          child: Text(l10n.delete),
+                        ),
+                      ],
+                    ),
+                  );
+
+                  if (confirmed == true && context.mounted) {
+                    final scaffoldMessenger = ScaffoldMessenger.of(context);
+                    final navigator = Navigator.of(context);
+                    
+                    try {
+                      // Show loading indicator
+                      showDialog(
+                        context: context,
+                        barrierDismissible: false,
+                        builder: (context) => const Center(
+                          child: CircularProgressIndicator(),
+                        ),
+                      );
+
+                      final success = await authProvider.deleteAccount();
+                      
+                      if (context.mounted) {
+                        Navigator.of(context).pop(); // Close loading dialog
+                        
+                        if (success) {
+                          navigator.pop(); // Close profile dialog
+                          scaffoldMessenger.showSnackBar(
+                            SnackBar(
+                              content: Text(l10n.deleteAccountSuccess),
+                              backgroundColor: AppTheme.successColor,
+                            ),
+                          );
+                        } else {
+                          scaffoldMessenger.showSnackBar(
+                            SnackBar(
+                              content: Text(l10n.deleteAccountError),
+                              backgroundColor: AppTheme.errorColor,
+                            ),
+                          );
+                        }
+                      }
+                    } catch (e) {
+                      if (context.mounted) {
+                        Navigator.of(context).pop(); // Close loading dialog
+                        scaffoldMessenger.showSnackBar(
+                          SnackBar(
+                            content: Text(l10n.deleteAccountError),
+                            backgroundColor: AppTheme.errorColor,
+                          ),
+                        );
+                      }
+                    }
+                  }
+                },
+                icon: const Icon(Icons.delete_forever, size: 20),
+                label: Text(l10n.deleteAccount),
+                style: TextButton.styleFrom(
+                  foregroundColor: AppTheme.errorColor,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+              ),
             ],
           ),
         ),
