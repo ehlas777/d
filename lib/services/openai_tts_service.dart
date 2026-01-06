@@ -67,15 +67,29 @@ class OpenAiTtsService {
     );
 
     if (resp.statusCode != 200) {
-      // Try to parse error message safely
-      try {
-        final err = jsonDecode(resp.body);
-        throw Exception('TTS қатесі: ${err['errorMessage'] ?? err['error'] ?? resp.statusCode}');
-      } catch (e) {
-        // If JSON parsing fails, show raw response
-        throw Exception('TTS қатесі: HTTP ${resp.statusCode} - ${resp.body.isEmpty ? 'Empty response' : resp.body}');
-      }
+    // Extract request ID for tracking
+    final requestId = resp.headers['x-request-id'] ?? resp.headers['request-id'] ?? 'N/A';
+    
+    // Truncate response body for logging
+    final responseBody = resp.body.isEmpty 
+        ? 'Empty response' 
+        : (resp.body.length > 500 ? '${resp.body.substring(0, 500)}...' : resp.body);
+    
+    // Log comprehensive error details
+    print('❌ TTS API Error:');
+    print('   HTTP Status: ${resp.statusCode}');
+    print('   Request ID: $requestId');
+    print('   Response Body: $responseBody');
+    
+    // Try to parse error message safely
+    try {
+      final err = jsonDecode(resp.body);
+      throw Exception('TTS қатесі: ${err['errorMessage'] ?? err['error'] ?? resp.statusCode}');
+    } catch (e) {
+      // If JSON parsing fails, show raw response
+      throw Exception('TTS қатесі: HTTP ${resp.statusCode} - $responseBody');
     }
+  }
 
     // Parse successful response
     try {

@@ -569,7 +569,10 @@ class BackendTranslationService {
       debugPrint('=== Segments Translation Error ===');
       debugPrint('Error: $e');
       if (e is DioException) {
+        final requestId = e.response?.headers.value('x-request-id') ?? 
+                          e.response?.headers.value('request-id') ?? 'N/A';
         debugPrint('HTTP status: ${e.response?.statusCode}');
+        debugPrint('Request ID: $requestId');
         debugPrint('Response data: ${_extractBackendMessage(e.response?.data) ?? '(empty)'}');
       }
       final friendlyMessage = e is DioException ? _formatDioError(e) : e.toString();

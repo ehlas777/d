@@ -217,23 +217,32 @@ class _TranscriptionEditorState extends State<TranscriptionEditor> {
   }
 
   void _simulateParallelProgress() {
-    // Simulate progress updates every 2 seconds
-    Timer.periodic(const Duration(seconds: 2), (timer) {
+    // Continuous animation - updates every 600ms
+    Timer.periodic(const Duration(milliseconds: 600), (timer) {
       if (!_isTranslating || !mounted) {
         timer.cancel();
         return;
       }
 
       setState(() {
-        final completed = (timer.tick * 15).clamp(0, _segments.length);
+        // Cycle through segments infinitely using modulo
+        final cycleLength = (_segments.length / 5).ceil(); // One full cycle
+        final completed = (timer.tick * 5) % (_segments.length + 10);
+
         if (completed < _segments.length) {
           _autoTranslationLogs.add('[$completed/${_segments.length}] Translating in parallel (Worker ${timer.tick % 3 + 1})...');
-          
-          if (timer.tick % 4 == 0) {
+
+          if (timer.tick % 4 == 0 && completed > 0) {
             _autoTranslationLogs.add('[INFO] Progress: ${(completed / _segments.length * 100).toStringAsFixed(1)}%');
           }
-        } else {
-          timer.cancel();
+        } else if (completed == _segments.length) {
+          _autoTranslationLogs.add('[$_segments.length/${_segments.length}] ✓ Complete!');
+          _autoTranslationLogs.add('[INFO] Progress: 100.0%');
+        }
+
+        // Keep logs list manageable - remove old entries
+        if (_autoTranslationLogs.length > 60) {
+          _autoTranslationLogs.removeRange(0, _autoTranslationLogs.length - 40);
         }
       });
     });

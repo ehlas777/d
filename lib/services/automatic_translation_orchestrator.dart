@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'package:path_provider/path_provider.dart';
 import 'package:uuid/uuid.dart';
+import 'package:wakelock_plus/wakelock_plus.dart';
 import '../models/auto_translation_state.dart';
 import '../models/auto_translation_progress.dart';
 import '../models/transcription_result.dart';
@@ -15,6 +16,7 @@ import 'auto_translation_storage.dart';
 import 'throttled_queue.dart';
 import 'network_resilience_handler.dart';
 import 'storage_manager.dart';
+import 'background_notification_manager.dart';
 
 /// Main orchestrator for automatic translation pipeline
 /// Coordinates all services and manages the complete workflow
@@ -34,8 +36,18 @@ class AutomaticTranslationOrchestrator {
   final _progressController = StreamController<AutoTranslationProgress>.broadcast();
   bool _isPaused = false;
   bool _isCancelled = false;
+  bool _isDisposed = false; // Dispose safety flag
   Timer? _autoSaveTimer;
   Function(AutoTranslationProgress)? _onProgress; // Store current callback
+  bool _isBackgroundMode = false;
+  bool _wakeLockEnabled = false;
+  final BackgroundNotificationManager _notificationManager = BackgroundNotificationManager.instance;
+  
+  // Queue references for cleanup on cancel
+  ThrottledQueue? _translationQueue;
+  ThrottledQueue? _ttsQueue;
+  ThrottledQueue? _cuttingQueue;
+  ThrottledQueue? _mergingQueue;
 
   AutomaticTranslationOrchestrator({
     required this.transcriptionService,
@@ -76,7 +88,6 @@ class AutomaticTranslationOrchestrator {
         if (_currentState == null) {
           throw Exception('No saved state found for project: $projectId');
         }
-        print('📂 Resumed project: $projectId');
       } else {
         await _initializeNewProject(
           videoFile: videoFile,
@@ -103,18 +114,18 @@ class AutomaticTranslationOrchestrator {
       );
       await _saveState();
 
-      print('✅ Automatic translation completed!');
+      print('✅ Аударма аяқталды!');
       return _currentState!;
     } catch (e) {
-      print('❌ Automatic translation failed: $e');
-      
+      print('❌ Қате: $e');
+
       if (_currentState != null) {
         _currentState = _currentState!.copyWith(
           currentStage: ProcessingStage.failed,
         );
         await _saveState();
       }
-      
+
       rethrow;
     } finally {
       _stopAutoSave();
@@ -130,19 +141,24 @@ class AutomaticTranslationOrchestrator {
       );
       await _saveState();
     }
-    print('⏸️ Processing paused');
   }
 
   /// Resume processing
   Future<void> resume() async {
     _isPaused = false;
-    print('▶️ Processing resumed');
   }
 
   /// Cancel processing
   Future<void> cancel() async {
     _isCancelled = true;
-    print('🛑 Processing cancelled');
+    
+    // Clear all pending tasks from queues
+    _translationQueue?.clear();
+    _ttsQueue?.clear();
+    _cuttingQueue?.clear();
+    _mergingQueue?.clear();
+    
+    print('🛑 Cancellation: Cleared all pending queue tasks');
   }
 
   // Private methods
@@ -155,26 +171,39 @@ class AutomaticTranslationOrchestrator {
     TranscriptionResult? existingTranscriptionResult,
   }) async {
     final projectId = const Uuid().v4();
-    
-    // If transcription exists, create segments from it
+
+    // If transcription exists, merge segments first, then create segment states
     final segments = existingTranscriptionResult != null
-        ? existingTranscriptionResult.segments.asMap().entries.map((entry) {
-            return SegmentProcessingState(
-              index: entry.key,
-              originalText: entry.value.text,
-              transcriptionComplete: true,
-            );
-          }).toList()
+        ? () {
+            // Merge segments based on count using the same rules as transcription stage
+            print('📊 Транскрипция: ${existingTranscriptionResult.segments.length} сегмент');
+            final mergedSegments = videoSplitter.mergeSegments(existingTranscriptionResult.segments);
+            print('📊 Біріктірілді: ${mergedSegments.length} сегмент');
+
+            // Create segment states from merged segments
+            return mergedSegments.asMap().entries.map((entry) {
+              final segment = entry.value;
+              return SegmentProcessingState(
+                index: entry.key,
+                originalText: segment.text,
+                segmentStartTime: segment.start,
+                segmentEndTime: segment.end,
+                segmentDuration: segment.end - segment.start,
+                currentStage: SegmentStage.transcribed,
+                transcriptionComplete: true,
+              );
+            }).toList();
+          }()
         : <SegmentProcessingState>[];
-    
+
     _currentState = AutoTranslationState(
       projectId: projectId,
       videoPath: videoFile.path,
       targetLanguage: targetLanguage,
       sourceLanguage: sourceLanguage ?? existingTranscriptionResult?.detectedLanguage,
       voice: voice,
-      currentStage: existingTranscriptionResult != null 
-          ? ProcessingStage.translating 
+      currentStage: existingTranscriptionResult != null
+          ? ProcessingStage.translating
           : ProcessingStage.idle,
       segments: segments,
       startedAt: DateTime.now(),
@@ -182,12 +211,9 @@ class AutomaticTranslationOrchestrator {
     );
 
     await _saveState();
-    print('📝 Created new project: $projectId');
   }
 
   Future<void> _preflightChecks(File videoFile) async {
-    print('🔍 Running pre-flight checks...');
-
     // 1. Check video file exists
     if (!await videoFile.exists()) {
       throw Exception('Video file not found: ${videoFile.path}');
@@ -203,12 +229,10 @@ class AutomaticTranslationOrchestrator {
       videoPath: videoFile.path,
       segmentCount: 100, // Estimated max segments
     );
-    
+
     if (!await storageManager.hasEnoughSpace(requiredMB)) {
       throw InsufficientStorageException(requiredMB: requiredMB);
     }
-
-    print('✅ Pre-flight checks passed');
   }
 
   Future<void> _executePipeline(
@@ -216,31 +240,17 @@ class AutomaticTranslationOrchestrator {
     Function(AutoTranslationProgress)? onProgress, {
     bool skipTranscription = false,
   }) async {
-    // Stage 1: Transcription (skip if already done)
+    // Stage 1: Transcription (Global - must be done first)
     if (!skipTranscription) {
       await _stageTranscription(videoFile, onProgress);
       _checkPauseOrCancel();
-    } else {
-      print('⏭️ Skipping transcription - using existing result');
     }
 
-    // Stage 2: Translation (parallel)
-    await _stageTranslation(onProgress);
+    // Stage 2: Parallel Pipeline (Translate -> TTS -> Cut -> Merge)
+    await _processAllSegmentsParallel(videoFile, onProgress);
     _checkPauseOrCancel();
 
-    // Stage 3: TTS (parallel)
-    await _stageTts(onProgress);
-    _checkPauseOrCancel();
-
-    // Stage 4: Video cutting (parallel)
-    await _stageVideoCutting(videoFile, onProgress);
-    _checkPauseOrCancel();
-
-    // Stage 5: Merging
-    await _stageMerging(onProgress);
-    _checkPauseOrCancel();
-
-    // Stage 6: Final assembly
+    // Stage 3: Final Assembly (Global - must wait for all segments)
     await _stageFinalAssembly(onProgress);
   }
 
@@ -252,8 +262,6 @@ class AutomaticTranslationOrchestrator {
       currentStage: ProcessingStage.transcribing,
     );
     _emitProgress(onProgress, 'Транскрипция бастадық...');
-
-    print('🎤 Stage 1: Transcription');
 
     final result = await transcriptionService.transcribe(
       videoFile: videoFile,
@@ -269,254 +277,583 @@ class AutomaticTranslationOrchestrator {
       },
     );
 
-    // Create segment states from transcription result
-    final segments = result.segments.asMap().entries.map((entry) {
+    // Merge segments based on count
+    print('📊 Транскрипция: ${result.segments.length} сегмент');
+    final mergedSegments = videoSplitter.mergeSegments(result.segments);
+    print('📊 Біріктірілді: ${mergedSegments.length} сегмент');
+
+    // Create segment states from merged transcription result
+    final segments = mergedSegments.asMap().entries.map((entry) {
+      final segment = entry.value;
       return SegmentProcessingState(
         index: entry.key,
-        originalText: entry.value.text,
+        originalText: segment.text,
+        segmentStartTime: segment.start,
+        segmentEndTime: segment.end,
+        segmentDuration: segment.end - segment.start,
+        currentStage: SegmentStage.transcribed,
         transcriptionComplete: true,
-        // Store segment timing for later use
       );
     }).toList();
 
     _currentState = _currentState!.copyWith(segments: segments);
     await _saveState();
-
-    print('✅ Transcription complete: ${segments.length} segments');
   }
 
-  Future<void> _stageTranslation(
+  /// Runs the full pipeline for all segments in parallel (throttled)
+  Future<void> _processAllSegmentsParallel(
+    File videoFile,
     Function(AutoTranslationProgress)? onProgress,
   ) async {
     _currentState = _currentState!.copyWith(
       currentStage: ProcessingStage.translating,
     );
-    _emitProgress(onProgress, 'Аударма бастадық...');
+    _emitProgress(onProgress, 'Сегменттер өңделуде...');
 
-    print('🌐 Stage 2: Translation (parallel)');
+    await _enableWakeLock();
 
-    final segments = _currentState!.segments;
-    int completed = 0;
-
-    // Process in parallel with throttling
-    final futures = segments.map((segment) {
-      return apiQueue.add(() async {
-        if (segment.translationComplete) {
-          return; // Skip already translated
-        }
-
-        try {
-          final translationSegment = TranslationSegment(
-            id: 'segment_${segment.index}',
-            text: segment.originalText,
-          );
-
-          final result = await networkHandler.retryWithBackoff(
-            operation: () => translationService.translateSegments(
-              segments: [translationSegment],
-              targetLanguage: _currentState!.targetLanguage,
-              sourceLanguage: _currentState!.sourceLanguage,
-              durationSeconds: 10, // Rough estimate per segment
-            ),
-          );
-
-          if (result.success && result.translatedSegments.isNotEmpty) {
-            final updatedSegment = segment.copyWith(
-              translatedText: result.translatedSegments.first.translatedText,
-              translationComplete: true,
-            );
-
-            // Update state
-            _currentState!.segments[segment.index] = updatedSegment;
-            completed++;
-
-            _emitProgress(
-              onProgress,
-              '🌐 Аударма: $completed/${segments.length} (${(completed * 100 / segments.length).toStringAsFixed(0)}%)',
-            );
-          }
-        } catch (e) {
-          print('❌ Translation failed for segment ${segment.index}: $e');
-          final updatedSegment = segment.copyWith(
-            errorMessage: e.toString(),
-          );
-          _currentState!.segments[segment.index] = updatedSegment;
-        }
-      });
-    }).toList();
-
-    await Future.wait(futures);
-    await _saveState();
-
-    print('✅ Translation complete: $completed/${segments.length} segments');
-  }
-
-  Future<void> _stageTts(
-    Function(AutoTranslationProgress)? onProgress,
-  ) async {
-    _currentState = _currentState!.copyWith(
-      currentStage: ProcessingStage.generatingTts,
-    );
-    _emitProgress(onProgress, 'Аудио жасалуда...');
-
-    print('🔊 Stage 3: TTS (parallel)');
-
+    // Prepare directories
     final appDir = await getApplicationDocumentsDirectory();
-    final audioDir = Directory('${appDir.path}/tts_audio/${_currentState!.projectId}');
+    final projectId = _currentState!.projectId;
+
+    // Directories
+    final audioDir = Directory('${appDir.path}/tts_audio/$projectId');
     await audioDir.create(recursive: true);
     _currentState = _currentState!.copyWith(audioDir: audioDir.path);
 
+    final splitDir = Directory('${appDir.path}/split_videos/$projectId');
+    await splitDir.create(recursive: true);
+    _currentState = _currentState!.copyWith(splitVideoDir: splitDir.path);
+
+    final mergedDir = Directory('${appDir.path}/merged_videos/$projectId');
+    await mergedDir.create(recursive: true);
+    _currentState = _currentState!.copyWith(mergedVideoDir: mergedDir.path);
+
+    await _saveState();
+
+    // Initialize queues and store references for cleanup
+    _translationQueue = ThrottledQueue(maxConcurrent: 5);
+    _ttsQueue = ThrottledQueue(
+      maxConcurrent: 1, // Sequential: one at a time
+      delayBetweenRequests: const Duration(seconds: 1), // Wait 1s between TTS requests
+    );
+    _cuttingQueue = ThrottledQueue(maxConcurrent: 2); // CPU bound
+    _mergingQueue = ThrottledQueue(maxConcurrent: 2); // Heavy CPU
+
     final segments = _currentState!.segments;
-    int completed = 0;
+    int completedTasks = 0; // Rough progress tracker
+    final totalTasks = segments.length * 4; // 4 steps per segment
 
     final futures = segments.map((segment) {
-      return apiQueue.add(() async {
-        if (segment.ttsComplete || segment.translatedText == null) {
-          return;
-        }
-
-        try {
-          final audioFile = await networkHandler.retryWithBackoff(
-            operation: () => ttsService.convert(
-              text: segment.translatedText!,
-              voice: _currentState!.voice ?? 'alloy',
-            ),
-          );
-
-          // Move to organized directory
-          final targetPath = '${audioDir.path}/segment_${segment.index + 1}.mp3';
-          await audioFile.copy(targetPath);
-          await audioFile.delete();
-
-          final updatedSegment = segment.copyWith(
-            audioPath: targetPath,
-            ttsComplete: true,
-          );
-
-          _currentState!.segments[segment.index] = updatedSegment;
-          completed++;
-
-          // Always report progress to show continuous activity
-          _emitProgress(
-            onProgress,
-            '🔊 Аудио жасау: $completed/${segments.length} (${(completed * 100 / segments.length).toStringAsFixed(0)}%)',
-          );
-        } catch (e) {
-          print('❌ TTS failed for segment ${segment.index}: $e');
-          final updatedSegment = segment.copyWith(
-            errorMessage: e.toString(),
-          );
-          _currentState!.segments[segment.index] = updatedSegment;
-        }
-      });
+      return _processSingleSegmentFlow(
+        segmentIndex: segment.index,
+        videoFile: videoFile,
+        audioDir: audioDir,
+        splitDir: splitDir,
+        mergedDir: mergedDir,
+        translationQueue: _translationQueue!,
+        ttsQueue: _ttsQueue!,
+        cuttingQueue: _cuttingQueue!,
+        mergingQueue: _mergingQueue!,
+        onProgress: onProgress,
+        onTaskComplete: () {
+          completedTasks++;
+          // Optional: detailed progress
+        },
+      );
     }).toList();
 
     await Future.wait(futures);
+    
+    await _disableWakeLock();
     await _saveState();
-
-    print('✅ TTS complete: $completed/${segments.length} segments');
   }
 
-  Future<void> _stageVideoCutting(
-    File videoFile,
-    Function(AutoTranslationProgress)? onProgress,
-  ) async {
-    _currentState = _currentState!.copyWith(
-      currentStage: ProcessingStage.cuttingVideo,
-    );
-    _emitProgress(onProgress, 'Видео кесілуде...');
+  /// Processes a SINGLE segment through the entire chain:
+  /// Translate -> TTS -> Cut -> Merge
+  Future<void> _processSingleSegmentFlow({
+    required int segmentIndex,
+    required File videoFile,
+    required Directory audioDir,
+    required Directory splitDir,
+    required Directory mergedDir,
+    required ThrottledQueue translationQueue,
+    required ThrottledQueue ttsQueue,
+    required ThrottledQueue cuttingQueue,
+    required ThrottledQueue mergingQueue,
+    required Function(AutoTranslationProgress)? onProgress,
+    required Function() onTaskComplete,
+  }) async {
+    // Helper to get current state safely
+    SegmentProcessingState getSegment() => _currentState!.segments[segmentIndex];
 
-    print('✂️ Stage 4: Video cutting');
+    try {
+      // Check cancellation at start
+      if (_isCancelled) return;
 
-    final appDir = await getApplicationDocumentsDirectory();
-    final splitDir = Directory('${appDir.path}/split_videos/${_currentState!.projectId}');
-    await splitDir.create(recursive: true);
+      // -----------------------------------------------------------------
+      // STEP 1: TRANSLATION (Reuse user-provided API Queue logic or separate)
+      // -----------------------------------------------------------------
+      if (!getSegment().translationComplete) {
+        await _retrySegmentOperation(
+          segmentIndex: segmentIndex,
+          operationName: 'Translation',
+          operation: () async {
+            await translationQueue.add(() async {
+              if (_isCancelled || getSegment().translationComplete) return;
 
-    _currentState = _currentState!.copyWith(splitVideoDir: splitDir.path);
+              final segment = getSegment();
 
-    // Convert segments to transcription segments
-    final transcriptionSegments = _currentState!.segments.map((s) {
-      return TranscriptionSegment(
-        start: s.index * 5.0, // Placeholder timing
-        end: (s.index + 1) * 5.0,
-        text: s.originalText,
-        language: _currentState!.sourceLanguage ?? 'auto',
-      );
-    }).toList();
+              final translationSegment = TranslationSegment(
+                id: 'segment_${segment.index}',
+                text: segment.originalText,
+              );
 
-    await videoSplitter.splitVideoBySegments(
-      videoPath: videoFile.path,
-      segments: transcriptionSegments,
-      outputDir: splitDir.path,
-      onProgress: (progress) {
-        _emitProgress(
-          onProgress,
-          '✂️ Видео кесу: ${(progress * 100).toStringAsFixed(0)}%',
+              final result = await networkHandler.retryWithBackoff(
+                operation: () => translationService.translateSegments(
+                  segments: [translationSegment],
+                  targetLanguage: _currentState!.targetLanguage,
+                  sourceLanguage: _currentState!.sourceLanguage,
+                  durationSeconds: 10,
+                ),
+              );
+
+              if (result.success && result.translatedSegments.isNotEmpty) {
+                final translatedText = result.translatedSegments.first.translatedText;
+                
+                await _updateSegmentState(segmentIndex, (s) => s.copyWith(
+                  translatedText: translatedText,
+                  translationComplete: true,
+                  currentStage: SegmentStage.translated,
+                ));
+                
+                onTaskComplete();
+                final progressMsg = '✅ 1/4 Translated: Seg ${segmentIndex + 1}';
+                print(progressMsg);
+                _emitProgress(onProgress, progressMsg);
+              } else {
+                throw Exception(result.errorMessage ?? 'Translation failed');
+              }
+            });
+          },
         );
-      },
-    );
+      }
 
-    // Update segment states
-    for (var i = 0; i < _currentState!.segments.length; i++) {
-      final videoPath = '${splitDir.path}/segment_${i + 1}.mp4';
-      _currentState!.segments[i] = _currentState!.segments[i].copyWith(
-        videoSegmentPath: videoPath,
-        videoCutComplete: true,
-      );
+      // -----------------------------------------------------------------
+      // STEP 2: TTS
+      // -----------------------------------------------------------------
+      if (getSegment().translationComplete && !getSegment().ttsComplete) {
+         if (getSegment().translatedText == null) throw Exception('No translated text');
+
+         await _retrySegmentOperation(
+           segmentIndex: segmentIndex,
+           operationName: 'TTS',
+           operation: () async {
+             await ttsQueue.add(() async {
+               if (_isCancelled || getSegment().ttsComplete) return;
+
+               final segment = getSegment();
+
+               final audioFile = await networkHandler.retryWithBackoff(
+                 operation: () => ttsService.convert(
+                   text: segment.translatedText!,
+                   voice: _currentState!.voice ?? 'alloy',
+                 ),
+               );
+
+               // Unique naming to avoid collision
+               final targetPath = '${audioDir.path}/seg_${segmentIndex}_tts.mp3';
+               final targetFile = File(targetPath);
+               
+               if (await targetFile.exists()) {
+                 await targetFile.delete();
+               }
+               await audioFile.copy(targetPath);
+               await audioFile.delete();
+
+               await _updateSegmentState(segmentIndex, (s) => s.copyWith(
+                 audioPath: targetPath,
+                 ttsComplete: true,
+                 currentStage: SegmentStage.ttsReady,
+               ));
+               
+               onTaskComplete();
+               final progressMsg = '✅ 2/4 TTS: Seg ${segmentIndex + 1}';
+               print(progressMsg);
+               _emitProgress(onProgress, progressMsg);
+             });
+           },
+         );
+      }
+
+      // -----------------------------------------------------------------
+      // STEP 3: CUT VIDEO
+      // -----------------------------------------------------------------
+      // Note: Cutting depends on original timestamps, strictly speaking it can start 
+      // anytime after transcription, but user wants flow: Translate->TTS->Cut->Merge
+      // or Translate->TTS->Video(Cut+Stretch).
+      // We'll run it after TTS to follow linear logic or keep CPU spikes managed.
+      
+      if (getSegment().ttsComplete && !getSegment().videoCutComplete) {
+         await _retrySegmentOperation(
+           segmentIndex: segmentIndex,
+           operationName: 'Video Cut',
+           operation: () async {
+             await cuttingQueue.add(() async {
+               if (_isCancelled || getSegment().videoCutComplete) return;
+
+               final segment = getSegment();
+
+               await _updateSegmentState(segmentIndex, (s) => s.copyWith(
+                  currentStage: SegmentStage.cuttingVideo,
+               ));
+
+               final transcriptionSegment = TranscriptionSegment(
+                 start: segment.segmentStartTime!,
+                 end: segment.segmentEndTime!,
+                 text: segment.originalText,
+                 language: _currentState!.sourceLanguage ?? 'auto',
+               );
+
+               // Unique temporary directory for this cut operation
+               final tempCutDir = Directory('${splitDir.path}/temp_cut_$segmentIndex');
+               await tempCutDir.create(recursive: true);
+
+               await videoSplitter.splitVideoBySegments(
+                 videoPath: videoFile.path,
+                 segments: [transcriptionSegment],
+                 outputDir: tempCutDir.path,
+                 onProgress: (_) {},
+               );
+
+               // Expecting segment_1.mp4 in temp dir
+               final tempOutput = '${tempCutDir.path}/segment_1.mp4';
+               final finalOutput = '${splitDir.path}/seg_${segmentIndex}_cut.mp4';
+
+               final tempFile = File(tempOutput);
+               if (await tempFile.exists()) {
+                  if (await File(finalOutput).exists()) {
+                    await File(finalOutput).delete();
+                  }
+                  await tempFile.rename(finalOutput);
+               } else {
+                  throw Exception('Cut output not found for segment $segmentIndex');
+               }
+               
+               // Cleanup root segment_1.mp4 if it leaked or temp dir
+               // `splitVideoBySegments` might write to outputDir/segment_1.mp4
+               await tempCutDir.delete(recursive: true);
+
+               await _updateSegmentState(segmentIndex, (s) => s.copyWith(
+                   videoSegmentPath: finalOutput,
+                   videoCutComplete: true,
+                   currentStage: SegmentStage.cutReady,
+               ));
+               
+               onTaskComplete();
+               final progressMsg = '✅ 3/4 Cut: Seg ${segmentIndex + 1}';
+               print(progressMsg);
+               _emitProgress(onProgress, progressMsg);
+             });
+           },
+         );
+      }
+
+      // -----------------------------------------------------------------
+      // STEP 4: MERGE
+      // -----------------------------------------------------------------
+      if (getSegment().videoCutComplete && getSegment().ttsComplete && !getSegment().mergeComplete) {
+         await _retrySegmentOperation(
+           segmentIndex: segmentIndex,
+           operationName: 'Merge',
+           operation: () async {
+             await mergingQueue.add(() async {
+               if (_isCancelled || getSegment().mergeComplete) return;
+               
+               final segment = getSegment();
+               
+               // STRICT CHECK: Dependencies
+               final videoPath = segment.videoSegmentPath;
+               final audioPath = segment.audioPath;
+               
+               if (videoPath == null || !await File(videoPath).exists()) {
+                  throw Exception('Missing video cut file for segment $segmentIndex');
+               }
+               if (audioPath == null || !await File(audioPath).exists()) {
+                  throw Exception('Missing audio file for segment $segmentIndex');
+               }
+
+               await _updateSegmentState(segmentIndex, (s) => s.copyWith(
+                 currentStage: SegmentStage.merging,
+              ));
+              
+              // Prepare isolated environment for merger
+              final tempMergeContextDir = Directory('${mergedDir.path}/ctx_$segmentIndex');
+              await tempMergeContextDir.create(recursive: true);
+              
+              final tempSplitDir = Directory('${tempMergeContextDir.path}/split');
+              await tempSplitDir.create();
+              final tempAudioDir = Directory('${tempMergeContextDir.path}/audio');
+              await tempAudioDir.create();
+              
+              // Copy/Link files to standard names expected by `mergeVideoWithAudio` (segment_1.mp4)
+              await File(videoPath).copy('${tempSplitDir.path}/segment_1.mp4');
+              await File(audioPath).copy('${tempAudioDir.path}/segment_1.mp3');
+              
+              final transcriptionSegment = TranscriptionSegment(
+                start: segment.segmentStartTime ?? 0.0,
+                end: segment.segmentEndTime ?? 0.0,
+                text: segment.originalText,
+                language: _currentState!.sourceLanguage ?? 'auto',
+              );
+              
+              await videoSplitter.mergeVideoWithAudio(
+                splitVideoDir: tempSplitDir.path, // Directory containing segment_1.mp4
+                audioDir: tempAudioDir.path,      // Directory containing segment_1.mp3
+                segments: [transcriptionSegment], // List of 1 segment
+                outputDir: tempMergeContextDir.path,
+                onProgress: (_) {},
+              );
+              
+              final tempOutput = '${tempMergeContextDir.path}/merged_1.mp4';
+              // CRITICAL: Use merged_N.mp4 naming to match concatenateAndSpeedUp() expectations
+              // concatenateAndSpeedUp() searches for pattern: merged_\\d+\\.mp4
+              final finalOutput = '${mergedDir.path}/merged_${segmentIndex + 1}.mp4';
+              
+              if (await File(tempOutput).exists()) {
+                 if (await File(finalOutput).exists()) await File(finalOutput).delete();
+                 await File(tempOutput).rename(finalOutput);
+              } else {
+                 throw Exception('Merge output not found for segment $segmentIndex');
+              }
+              
+              await tempMergeContextDir.delete(recursive: true);
+              
+               await _updateSegmentState(segmentIndex, (s) => s.copyWith(
+                  mergedSegmentPath: finalOutput,
+                  mergeComplete: true,
+                  currentStage: SegmentStage.merged,
+              ));
+              
+              onTaskComplete();
+              final progressMsg = '✅ 4/4 Merge: Seg ${segmentIndex + 1}';
+              print(progressMsg);
+              _emitProgress(onProgress, progressMsg);
+             });
+           },
+         );
+      }
+      
+      // Update general progress indicator
+      _emitProgress(onProgress, 'Сегмент ${segmentIndex + 1} дайын...');
+
+    } catch (e) {
+       // Determine which stage failed for better diagnostics
+       final segment = getSegment();
+       final failedStage = !segment.translationComplete 
+           ? 'Translation' 
+           : !segment.ttsComplete 
+               ? 'TTS' 
+               : !segment.videoCutComplete 
+                   ? 'Video Cut' 
+                   : 'Merge';
+       
+       final errorType = _categorizeError(e.toString());
+       final rootCause = _extractRootCause(e.toString(), failedStage);
+       
+       final errorMsg = '❌ Seg ${segmentIndex + 1} PIPELINE FAILED at $failedStage stage [$errorType: $rootCause]';
+       print(errorMsg);
+       _emitProgress(onProgress, errorMsg);
+       
+       await _updateSegmentState(segmentIndex, (s) => s.copyWith(
+          errorMessage: '[$failedStage] $errorType: $rootCause',
+          currentStage: SegmentStage.failed,
+       ));
+       // We do NOT rethrow, so other segments can continue.
     }
-
-    await _saveState();
-    print('✅ Video cutting complete');
   }
 
-  Future<void> _stageMerging(
-    Function(AutoTranslationProgress)? onProgress,
-  ) async {
-    _currentState = _currentState!.copyWith(
-      currentStage: ProcessingStage.mergingVideo,
-    );
-    _emitProgress(onProgress, 'Біріктірілуде...');
-
-    print('🔗 Stage 5: Merging video with audio');
-
-    final appDir = await getApplicationDocumentsDirectory();
-    final mergedDir = Directory('${appDir.path}/merged_videos/${_currentState!.projectId}');
-    await mergedDir.create(recursive: true);
-
-    _currentState = _currentState!.copyWith(mergedVideoDir: mergedDir.path);
-
-    final transcriptionSegments = _currentState!.segments.map((s) {
-      return TranscriptionSegment(
-        start: s.index * 5.0,
-        end: (s.index + 1) * 5.0,
-        text: s.originalText,
-        language: _currentState!.sourceLanguage ?? 'auto',
-      );
-    }).toList();
-
-    await videoSplitter.mergeVideoWithAudio(
-      splitVideoDir: _currentState!.splitVideoDir!,
-      audioDir: _currentState!.audioDir!,
-      segments: transcriptionSegments,
-      outputDir: mergedDir.path,
-      onProgress: (progress) {
-        _emitProgress(
-          onProgress,
-          '🔗 Біріктіру: ${(progress * 100).toStringAsFixed(0)}%',
-        );
-      },
-    );
-
-    for (var i = 0; i < _currentState!.segments.length; i++) {
-      final mergedPath = '${mergedDir.path}/merged_${i + 1}.mp4';
-      _currentState!.segments[i] = _currentState!.segments[i].copyWith(
-        mergedSegmentPath: mergedPath,
-        mergeComplete: true,
-      );
+  /// Retry a segment operation with progressive backoff and detailed error analysis
+  /// Provides segment-level retry for transient errors
+  Future<void> _retrySegmentOperation({
+    required int segmentIndex,
+    required String operationName,
+    required Future<void> Function() operation,
+    int maxRetries = 3,
+    Duration initialDelay = const Duration(seconds: 3),
+  }) async {
+    int attempt = 0;
+    final List<Duration> retryDelays = [
+      const Duration(seconds: 3),   // First retry: 3s
+      const Duration(seconds: 8),   // Second retry: 8s
+      const Duration(seconds: 20),  // Third retry: 20s
+    ];
+    
+    String? lastErrorType;
+    String? lastErrorDetails;
+    
+    while (attempt < maxRetries) {
+      try {
+        await operation();
+        // Success - only log if recovered from previous failure
+        if (attempt > 0) {
+          print('✅ Seg ${segmentIndex + 1} $operationName: Recovered after $attempt retry(ies)');
+        }
+        return;
+      } catch (e) {
+        attempt++;
+        
+        // Analyze error type and root cause
+        final errorStr = e.toString();
+        final errorType = _categorizeError(errorStr);
+        final rootCause = _extractRootCause(errorStr, operationName);
+        
+        lastErrorType = errorType;
+        lastErrorDetails = rootCause;
+        
+        if (attempt >= maxRetries) {
+          // Final failure - comprehensive error report
+          print('❌ Seg ${segmentIndex + 1} $operationName FAILED after $maxRetries attempts');
+          print('   └─ Type: $errorType | Cause: $rootCause');
+          if (errorType == 'SESSION') {
+            print('   └─ Hint: Backend session expired. User may need to re-login.');
+          } else if (errorType == 'NETWORK') {
+            print('   └─ Hint: Check internet connection or API endpoint availability.');
+          } else if (errorType == 'FFMPEG') {
+            print('   └─ Hint: Video/audio file may be corrupted or format incompatible.');
+          }
+          rethrow;
+        }
+        
+        // Retry attempt - concise single-line log
+        final delay = retryDelays[attempt - 1];
+        print('⚠️ Seg ${segmentIndex + 1} $operationName [$errorType] retry $attempt/$maxRetries in ${delay.inSeconds}s');
+        
+        await Future.delayed(delay);
+      }
     }
+  }
+  
+  /// Categorize error type for better diagnostics
+  String _categorizeError(String error) {
+    final errorLower = error.toLowerCase();
+    
+    // CRITICAL: Check FFmpeg errors FIRST before SESSION
+    // FFmpeg errors can contain various patterns
+    if (error.contains('FFmpeg') || 
+        error.contains('FFmpeg қатесі') ||
+        errorLower.contains('codec') ||
+        errorLower.contains('conversion failed') ||
+        errorLower.contains('error splitting') ||
+        errorLower.contains('invalid data') ||
+        error.contains('Invalid argument') || 
+        error.contains('No such file')) {
+      return 'FFMPEG';
+    }
+    
+    // Then check SESSION errors
+    if (error.contains('SESSION_NOT_FOUND') || error.contains('401') || error.contains('Unauthorized')) {
+      return 'SESSION';
+    } else if (error.contains('SocketException') || error.contains('NetworkException') || error.contains('TimeoutException')) {
+      return 'NETWORK';
+    } else if (error.contains('429') || error.contains('rate limit')) {
+      return 'RATE_LIMIT';
+    } else if (error.contains('500') || error.contains('502') || error.contains('503')) {
+      return 'SERVER';
+    }
+    return 'API';
+  }
+  
+  /// Extract meaningful root cause from error message
+  String _extractRootCause(String error, String operation) {
+    // FFmpeg specific extraction
+    if (error.contains('FFmpeg қатесі:')) {
+      final match = RegExp(r'FFmpeg қатесі: (.+)').firstMatch(error);
+      if (match != null) {
+        final ffmpegError = match.group(1)?.trim() ?? '';
+        if (ffmpegError.isNotEmpty && ffmpegError.length < 100) {
+          return ffmpegError;
+        }
+      }
+      return 'FFmpeg operation failed';
+    }
+    
+    // SESSION errors
+    if (error.contains('SESSION_NOT_FOUND')) {
+      return 'Session expired or invalidated';
+    }
+    
+    // Network errors
+    if (error.contains('SocketException')) {
+      return 'Network connection failed';
+    }
+    if (error.contains('TimeoutException')) {
+      return 'Request timed out';
+    }
+    
+    // FFmpeg errors
+    if (error.contains('No such file')) {
+      return 'Input file missing';
+    }
+    if (error.contains('Invalid argument')) {
+      return 'Invalid FFmpeg parameters';
+    }
+    if (error.toLowerCase().contains('codec')) {
+      return 'Codec error or unsupported format';
+    }
+    
+    // API errors
+    if (error.contains('429')) {
+      return 'API rate limit exceeded';
+    }
+    if (error.contains('500')) {
+      return 'Server internal error';
+    }
+    
+    // Generic extraction - try to get first meaningful line
+    final lines = error.split('\n');
+    for (var line in lines) {
+      final trimmed = line.trim();
+      if (trimmed.isNotEmpty && !trimmed.startsWith('at ') && !trimmed.startsWith('#')) {
+        if (trimmed.length > 80) {
+          return '${trimmed.substring(0, 77)}...';
+        }
+        return trimmed;
+      }
+    }
+    
+    return 'Unknown error';
+  }
 
-    await _saveState();
-    print('✅ Merging complete');
+  /// Thread-safe update of a single segment's state
+  /// Uses a strict read-modify-write pattern on the current state list
+  Future<void> _updateSegmentState(
+    int index,
+    SegmentProcessingState Function(SegmentProcessingState) reducer,
+  ) async {
+    // Dispose safety: Don't update state after disposal
+    if (_isDisposed || _currentState == null) return;
+    
+    // Create shallow copy of list to ensure immutability of previous state
+    final segments = List<SegmentProcessingState>.from(_currentState!.segments);
+    
+    // Check bounds
+    if (index >= 0 && index < segments.length) {
+      final oldSegment = segments[index];
+      final newSegment = reducer(oldSegment);
+      segments[index] = newSegment;
+      
+      _currentState = _currentState!.copyWith(
+        segments: segments,
+        lastUpdated: DateTime.now(),
+      );
+      
+      // Notify listeners of state change
+      _progressController.add(AutoTranslationProgress.fromState(
+         _currentState!,
+         currentActivity: 'Processing...', // continuous update
+      ));
+    }
   }
 
   Future<void> _stageFinalAssembly(
@@ -526,8 +863,48 @@ class AutomaticTranslationOrchestrator {
       currentStage: ProcessingStage.finalizing,
     );
     _emitProgress(onProgress, 'Аяқталуда...');
+    
+    // STRICT VALIDATION: Check all segments are complete and files exist
+    final failedSegments = _currentState!.segments.where((s) {
+      if (!s.mergeComplete) return true;
+      if (s.mergedSegmentPath == null) return true;
+      return !File(s.mergedSegmentPath!).existsSync();
+    }).toList();
+    
+    if (failedSegments.isNotEmpty) {
+      // Detailed failure report
+      print('');
+      print('═══════════════════════════════════════════════════════');
+      print('❌ FINAL ASSEMBLY FAILED: ${failedSegments.length}/${_currentState!.segments.length} segments incomplete');
+      print('═══════════════════════════════════════════════════════');
+      
+      for (var seg in failedSegments) {
+        final stage = !seg.translationComplete 
+            ? 'Translation' 
+            : !seg.ttsComplete 
+                ? 'TTS' 
+                : !seg.videoCutComplete 
+                    ? 'Video Cut' 
+                    : 'Merge';
+        
+        final errorInfo = seg.errorMessage ?? 'Stage incomplete';
+        print('  Seg ${seg.index + 1}: Failed at $stage - $errorInfo');
+      }
+      
+      print('═══════════════════════════════════════════════════════');
+      print('');
+      
+      final failedIndices = failedSegments.map((s) => s.index + 1).join(', ');
+      throw Exception(
+        'Cannot assemble: ${failedSegments.length}/${_currentState!.segments.length} segments failed/missing. '
+        'Segment indices: $failedIndices'
+      );
+    }
+    
+    print('✅ All ${_currentState!.segments.length} segments validated for assembly');
 
-    print('🎬 Stage 6: Final assembly');
+    // Enable wake lock for final assembly
+    await _enableWakeLock();
 
     final appDir = await getApplicationDocumentsDirectory();
     final finalPath = '${appDir.path}/final_${_currentState!.projectId}.mp4';
@@ -547,7 +924,8 @@ class AutomaticTranslationOrchestrator {
     _currentState = _currentState!.copyWith(finalVideoPath: finalPath);
     await _saveState();
 
-    print('✅ Final assembly complete: $finalPath');
+    // Disable wake lock after final assembly
+    await _disableWakeLock();
   }
 
   void _checkPauseOrCancel() {
@@ -565,7 +943,8 @@ class AutomaticTranslationOrchestrator {
     Function(AutoTranslationProgress)? onProgress,
     String activity,
   ) {
-    if (_currentState == null) return;
+    // Dispose safety: Don't emit progress after disposal
+    if (_isDisposed || _currentState == null) return;
 
     final progress = AutoTranslationProgress.fromState(
       _currentState!,
@@ -574,27 +953,25 @@ class AutomaticTranslationOrchestrator {
 
     _progressController.add(progress);
     onProgress?.call(progress);
+
+    // Update notification if in background mode
+    if (_isBackgroundMode) {
+      _updateNotificationProgress(progress);
+    }
   }
 
   Future<void> _saveState() async {
-    if (_currentState != null) {
-      _currentState = _currentState!.copyWith(
-        lastUpdated: DateTime.now(),
-      );
-      await storage.saveState(_currentState!);
-      
-      // State save messages removed to reduce monitor noise
-      // Progress is shown by stage-specific updates instead
-      // _emitProgress(
-      //   _onProgress,
-      //   '💾 State saved: ${_currentState!.projectId.substring(0, 8)}...',
-      // );
-    }
+    // Dispose safety: Don't save state after disposal
+    if (_isDisposed || _currentState == null) return;
+    
+    // Logic moved to periodic timer mostly, but manual calls still ensure checkpoints
+    await storage.saveState(_currentState!);
   }
 
   void _startAutoSave() {
     _autoSaveTimer?.cancel();
-    _autoSaveTimer = Timer.periodic(const Duration(seconds: 5), (_) {
+    _autoSaveTimer = Timer.periodic(const Duration(seconds: 2), (_) {
+       // Save more frequently for granular updates
       _saveState();
     });
   }
@@ -604,9 +981,66 @@ class AutomaticTranslationOrchestrator {
     _autoSaveTimer = null;
   }
 
+  /// Enable background mode with wake lock and notifications
+  Future<void> enableBackgroundMode() async {
+    if (_isBackgroundMode) return;
+
+    // Initialize notification manager
+    await _notificationManager.initialize();
+    await _notificationManager.requestPermissions();
+
+    _isBackgroundMode = true;
+  }
+
+  /// Disable background mode
+  Future<void> disableBackgroundMode() async {
+    if (!_isBackgroundMode) return;
+
+    // Disable wake lock if enabled
+    if (_wakeLockEnabled) {
+      await _disableWakeLock();
+    }
+
+    _isBackgroundMode = false;
+  }
+
+  /// Enable wake lock for CPU-intensive operations
+  Future<void> _enableWakeLock() async {
+    if (_wakeLockEnabled) return;
+
+    try {
+      await WakelockPlus.enable();
+      _wakeLockEnabled = true;
+    } catch (e) {
+      print('❌ Wake lock қатесі: $e');
+    }
+  }
+
+  /// Disable wake lock
+  Future<void> _disableWakeLock() async {
+    if (!_wakeLockEnabled) return;
+
+    try {
+      await WakelockPlus.disable();
+      _wakeLockEnabled = false;
+    } catch (e) {
+      print('❌ Wake lock өшіру қатесі: $e');
+    }
+  }
+
+  /// Update notification with current progress (throttled)
+  void _updateNotificationProgress(AutoTranslationProgress progress) {
+    if (!_isBackgroundMode) return;
+
+    _notificationManager.updateFromProgress(progress);
+  }
+
   /// Dispose resources
   void dispose() {
+    _isDisposed = true; // Set flag first to prevent further updates
     _stopAutoSave();
+    _disableWakeLock();
+    _notificationManager.cancelAll();
     _progressController.close();
   }
 }

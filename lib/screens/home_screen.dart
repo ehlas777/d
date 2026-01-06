@@ -41,6 +41,12 @@ import '../services/auto_translation_storage.dart';
 import '../services/throttled_queue.dart';
 import '../services/network_resilience_handler.dart';
 import '../services/storage_manager.dart';
+import '../services/app_lifecycle_observer.dart';
+import '../services/background_state_coordinator.dart';
+import '../models/auto_translation_progress.dart';
+import '../models/auto_translation_state.dart';
+import '../services/local_notification_service.dart';
+import 'package:gal/gal.dart';
 import 'subscription_screen.dart';
 
 enum TranscriptionState {
@@ -91,11 +97,18 @@ class _HomeScreenState extends State<HomeScreen> {
   AutomaticTranslationOrchestrator? _orchestrator;
   String? _finalVideoPath; // Completed video path
 
+  // Background mode
+  AppLifecycleObserver? _lifecycleObserver;
+  final BackgroundStateCoordinator _backgroundCoordinator = BackgroundStateCoordinator();
+  AppLifecycleState _currentLifecycleState = AppLifecycleState.resumed;
+  bool _isInBackgroundMode = false;
+
   @override
   void initState() {
     super.initState();
     _initializeWhisper();
     _initializeOrchestrator();
+    _initializeLifecycleObserver();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _checkForIncompleteProjects();
       _checkTrialStatus();
@@ -353,7 +366,7 @@ class _HomeScreenState extends State<HomeScreen> {
   void _initializeOrchestrator() async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
     final token = await authProvider.apiClient.getToken();
-    
+
     _orchestrator = AutomaticTranslationOrchestrator(
       transcriptionService: _transcriptionService,
       translationService: BackendTranslationService(authProvider.apiClient),
@@ -363,10 +376,76 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       videoSplitter: _videoSplitter,
       storage: AutoTranslationStorage(),
-      apiQueue: ThrottledQueue(maxConcurrent: 3),
+      apiQueue: ThrottledQueue(
+        maxConcurrent: 1,
+        delayBetweenRequests: const Duration(milliseconds: 1000),
+      ),
       networkHandler: NetworkResilienceHandler(),
       storageManager: StorageManager(),
     );
+  }
+
+  /// Initialize lifecycle observer for background mode
+  void _initializeLifecycleObserver() {
+    _lifecycleObserver = AppLifecycleObserver(
+      onLifecycleChanged: _handleLifecycleChange,
+    );
+    _lifecycleObserver!.attach();
+  }
+
+  /// Handle app lifecycle state changes
+  Future<void> _handleLifecycleChange(AppLifecycleState state) async {
+    setState(() {
+      _currentLifecycleState = state;
+    });
+
+    print('📱 Lifecycle changed: $state');
+
+    // Check if orchestrator is currently processing
+    final isProcessing = _orchestrator?.currentState != null &&
+                        _orchestrator!.currentState!.currentStage != ProcessingStage.completed;
+
+    switch (state) {
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+        // App going to background
+        if (isProcessing) {
+          print('🌙 Enabling background mode...');
+          setState(() {
+            _isInBackgroundMode = true;
+          });
+
+          // Enable background mode in orchestrator
+          await _orchestrator?.enableBackgroundMode();
+
+          // Enable background coordinator
+          if (_orchestrator != null) {
+            await _backgroundCoordinator.enableBackgroundMode(
+              progressStream: _orchestrator!.progressStream,
+            );
+          }
+        }
+        break;
+
+      case AppLifecycleState.resumed:
+        // App returning to foreground
+        if (_isInBackgroundMode) {
+          print('☀️  Returning to foreground...');
+          setState(() {
+            _isInBackgroundMode = false;
+          });
+
+          // Disable background mode
+          await _orchestrator?.disableBackgroundMode();
+          await _backgroundCoordinator.disableBackgroundMode();
+        }
+        break;
+
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        // App being terminated or hidden
+        break;
+    }
   }
 
   /// Trial статусын тексеру (тек аутентификацияланбаған пайдаланушылар үшін)
@@ -436,6 +515,8 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _transcriptionService.dispose();
+    _lifecycleObserver?.detach();
+    _backgroundCoordinator.dispose();
     super.dispose();
   }
 

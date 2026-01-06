@@ -5,8 +5,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_interceptor.dart';
 
 class ApiClient {
- //static const String baseUrl = 'http://localhost:5008';
- static const String baseUrl = 'https://qaznat.kz';
+static const String baseUrl = 'http://localhost:5008';
+ //static const String baseUrl = 'https://qaznat.kz';
 
   final Dio dio;
   final FlutterSecureStorage storage;

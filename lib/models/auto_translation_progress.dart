@@ -1,5 +1,26 @@
 import 'auto_translation_state.dart';
 
+/// Individual segment progress information
+class SegmentProgressInfo {
+  final int segmentIndex;
+  final SegmentStage currentStage;
+  final String? errorMessage;
+
+  SegmentProgressInfo({
+    required this.segmentIndex,
+    required this.currentStage,
+    this.errorMessage,
+  });
+
+  factory SegmentProgressInfo.fromSegment(SegmentProcessingState segment) {
+    return SegmentProgressInfo(
+      segmentIndex: segment.index,
+      currentStage: segment.currentStage,
+      errorMessage: segment.errorMessage,
+    );
+  }
+}
+
 /// Progress report for automatic translation
 class AutoTranslationProgress {
   final ProcessingStage stage;
@@ -9,7 +30,10 @@ class AutoTranslationProgress {
   final double percentage;
   final Duration? estimatedTimeRemaining;
   final String? currentActivity;
-  
+
+  // Per-segment progress tracking
+  final List<SegmentProgressInfo> segmentProgresses;
+
   // Cost tracking
   final double? currentCost;
   final String? currency;
@@ -22,9 +46,23 @@ class AutoTranslationProgress {
     required this.percentage,
     this.estimatedTimeRemaining,
     this.currentActivity,
+    this.segmentProgresses = const [],
     this.currentCost,
     this.currency,
   });
+
+  // Helper getters for stage-based segment counts
+  int get segmentsTranslating =>
+      segmentProgresses.where((s) => s.currentStage == SegmentStage.translating).length;
+
+  int get segmentsInTts =>
+      segmentProgresses.where((s) => s.currentStage == SegmentStage.generatingTts).length;
+
+  int get segmentsCutting =>
+      segmentProgresses.where((s) => s.currentStage == SegmentStage.cuttingVideo).length;
+
+  int get segmentsMerging =>
+      segmentProgresses.where((s) => s.currentStage == SegmentStage.merging).length;
 
   factory AutoTranslationProgress.fromState(
     AutoTranslationState state, {
@@ -93,6 +131,9 @@ class AutoTranslationProgress {
       percentage: percentage.clamp(0.0, 100.0),
       estimatedTimeRemaining: estimatedTimeRemaining,
       currentActivity: currentActivity ?? state.currentStage.displayName,
+      segmentProgresses: state.segments
+          .map((s) => SegmentProgressInfo.fromSegment(s))
+          .toList(),
       currentCost: state.totalCost,
       currency: state.currency,
     );

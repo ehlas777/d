@@ -12,6 +12,77 @@ class VideoSplitterService {
     return "'${path.replaceAll("'", "\\'")}'";
   }
 
+  /// Сегменттерді біріктіру: сегмент санына қарай топтау логикасы
+  ///
+  /// Біріктіру ережелері:
+  /// - < 30: біріктірмейміз
+  /// - 30-49: 2 сегментті біріктіреміз
+  /// - 50-99: 3 сегментті біріктіреміз
+  /// - 100-199: 4 сегментті біріктіреміз
+  /// - 200-399: 5 сегментті біріктіреміз
+  /// - 400-799: 6 сегментті біріктіреміз
+  /// - 800-1999: 8 сегментті біріктіреміз
+  /// - >= 2000: 10 сегментті біріктіреміз
+  List<TranscriptionSegment> mergeSegments(List<TranscriptionSegment> segments) {
+    final count = segments.length;
+
+    // 30-дан аз болса біріктірмейміз
+    if (count < 30) {
+      print('Segment count: $count - No merging needed (< 30)');
+      return segments;
+    }
+
+    // Біріктіру коэффициентін анықтау
+    int mergeCount;
+    if (count < 50) {
+      mergeCount = 2;
+    } else if (count < 100) {
+      mergeCount = 3;
+    } else if (count < 200) {
+      mergeCount = 4;
+    } else if (count < 400) {
+      mergeCount = 5;
+    } else if (count < 800) {
+      mergeCount = 6;
+    } else if (count < 2000) {
+      mergeCount = 8;
+    } else {
+      mergeCount = 10;
+    }
+
+    print('Segment count: $count - Merging every $mergeCount segments');
+
+    final List<TranscriptionSegment> merged = [];
+
+    for (int i = 0; i < segments.length; i += mergeCount) {
+      // Біріктірілетін сегменттерді алу
+      final end = (i + mergeCount > segments.length) ? segments.length : i + mergeCount;
+      final group = segments.sublist(i, end);
+
+      // Бірінші сегменттің start time және соңғы сегменттің end time
+      final startTime = group.first.start;
+      final endTime = group.last.end;
+
+      // Барлық мәтіндерді біріктіру
+      final combinedText = group.map((s) => s.text.trim()).join('\n');
+
+      // Жаңа біріктірілген сегмент жасау
+      final mergedSegment = TranscriptionSegment(
+        start: startTime,
+        end: endTime,
+        text: combinedText,
+        language: group.first.language,
+        confidence: group.map((s) => s.confidence ?? 0.0).reduce((a, b) => a + b) / group.length,
+        speaker: group.first.speaker,
+      );
+
+      merged.add(mergedSegment);
+    }
+
+    print('Merged segments: ${segments.length} → ${merged.length}');
+    return merged;
+  }
+
   /// Видеоны сегменттерге бөледі және әр сегмент үшін бөлек файл жасайды
   ///
   /// [videoPath] - түпнұсқа видео файлының жолы
@@ -81,6 +152,7 @@ class VideoSplitterService {
     final escapedOutput = _escapePath(outputPath);
 
     args.addAll([
+      '-loglevel', 'error', // Hide verbose progress output
       '-i', escapedInput,
       '-t', duration.toStringAsFixed(3),
       '-c:v', 'libx264',
@@ -117,6 +189,42 @@ class VideoSplitterService {
     final output = await session.getOutput();
     final durationStr = (output ?? '').trim();
     return double.tryParse(durationStr) ?? 0.0;
+  }
+
+  /// Видео файлының видео ағыны бар екенін тексеру
+  Future<bool> hasVideoStream(String videoPath) async {
+    final command =
+        '-v error -select_streams v:0 -count_frames -show_entries stream=codec_type,nb_read_frames -of default=noprint_wrappers=1:nokey=1 ${_escapePath(videoPath)}';
+    final session = await FFprobeKit.execute(command);
+    final returnCode = await session.getReturnCode();
+
+    if (!ReturnCode.isSuccess(returnCode)) {
+      // Қате болса, видео ағыны жоқ деп санаймыз
+      return false;
+    }
+
+    final output = await session.getOutput();
+    final lines = (output ?? '').trim().split('\n');
+
+    // Екі жол болу керек: codec_type және nb_read_frames
+    if (lines.isEmpty) {
+      return false;
+    }
+
+    // Бірінші жол codec_type болуы керек
+    if (lines.first.trim() != 'video') {
+      return false;
+    }
+
+    // Егер екінші жол болса, фреймдер санын тексеру
+    if (lines.length > 1) {
+      final frameCount = int.tryParse(lines[1].trim()) ?? 0;
+      // Ең азынан 1 фрейм болу керек
+      return frameCount > 0;
+    }
+
+    // Егер фрейм саны туралы мәлімет жоқ болса, codec_type-қа сеніп қоямыз
+    return true;
   }
 
   /// Видео сегменттерін TTS аудиолармен біріктіру
@@ -199,7 +307,7 @@ class VideoSplitterService {
     // speedRatio > 1.0 = видео ұзағырақ, видеоны FAST FORWARD (тездету)
     // speedRatio < 1.0 = видео қысқарақ, видеоны SLOW MOTION (баяулату)
     // speedRatio = 1.0 = синхронды, өзгеріс қажет емес
-    
+
     // Log parameters for debugging
     print('Merging segment:');
     print('  Video: $videoPath');
@@ -208,52 +316,81 @@ class VideoSplitterService {
 
     if (speedRatio.isInfinite || speedRatio.isNaN || speedRatio <= 0) {
        print('⚠️ Invalid speedRatio: $speedRatio. Defaulting to 1.0');
-       // This likely means audioDuration is 0. 
-       // We should arguably throw or handle gracefully. 
+       // This likely means audioDuration is 0.
+       // We should arguably throw or handle gracefully.
        // For now, let's not crash here but FFmpeg might fail if we generate bad filter.
     }
+
+    // Видео ағынының бар-жоғын тексеру
+    final hasVideo = await hasVideoStream(videoPath);
+    print('  Has video stream: $hasVideo');
 
     final escapedVideo = _escapePath(videoPath);
     final escapedAudio = _escapePath(audioPath);
     final escapedOutput = _escapePath(outputPath);
 
     final List<String> ffmpegArgs = [
+      '-loglevel', 'error', // Hide verbose progress output
       '-i', escapedVideo,
       '-i', escapedAudio,
     ];
 
-    // Видео жылдамдығын реттеу (setpts = slow motion/fast forward)
-    // Check for valid, finite speedRatio
-    if ((speedRatio - 1.0).abs() > 0.01 && speedRatio.isFinite && speedRatio > 0) {
-      // setpts: PTS multiplier < 1.0 = fast forward, > 1.0 = slow motion
-      final ptsMultiplier = 1.0 / speedRatio;
-      
-      // Ensure dot separator for double
-      final ptsStr = ptsMultiplier.toStringAsFixed(6);
+    if (!hasVideo) {
+      // Егер видео ағыны жоқ болса, аудиодан қара видео жасаймыз
+      print('⚠️ Video has no video stream, creating black video with audio');
+
+      // Аудио файлының ұзындығын алу
+      final audioDur = await getAudioDuration(audioPath);
 
       ffmpegArgs.addAll([
-        '-filter_complex', '[0:v]setpts=$ptsStr*PTS[v]',
-        '-map', '[v]',
-        '-map', '1:a:0',
+        '-f', 'lavfi',
+        '-i', 'color=c=black:s=1280x720:r=25', // Қара экран
+        '-t', audioDur.toStringAsFixed(3), // Аудио ұзындығы
+        '-map', '2:v:0', // Қара экран видео
+        '-map', '1:a:0', // Жаңа аудио
+        '-c:v', 'libx264',
+        '-preset', 'fast',
+        '-crf', '23',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-shortest',
+        '-y',
+        escapedOutput,
       ]);
     } else {
-      // Өзгеріс қажет емес
+      // Видео жылдамдығын реттеу (setpts = slow motion/fast forward)
+      // Check for valid, finite speedRatio
+      if ((speedRatio - 1.0).abs() > 0.01 && speedRatio.isFinite && speedRatio > 0) {
+        // setpts: PTS multiplier < 1.0 = fast forward, > 1.0 = slow motion
+        final ptsMultiplier = 1.0 / speedRatio;
+
+        // Ensure dot separator for double
+        final ptsStr = ptsMultiplier.toStringAsFixed(6);
+
+        ffmpegArgs.addAll([
+          '-filter_complex', '[0:v]setpts=$ptsStr*PTS[v]',
+          '-map', '[v]',
+          '-map', '1:a:0',
+        ]);
+      } else {
+        // Өзгеріс қажет емес
+        ffmpegArgs.addAll([
+          '-map', '0:v:0',
+          '-map', '1:a:0',
+        ]);
+      }
+
       ffmpegArgs.addAll([
-        '-map', '0:v:0',
-        '-map', '1:a:0',
+        '-c:v', 'libx264', // Видео кодек
+        '-preset', 'fast', // Жылдам кодтау
+        '-crf', '23', // Сапа
+        '-c:a', 'aac', // MP3 → AAC (кейбір MP3 форматтары copy режимінде жұмыс істемейді)
+        '-b:a', '128k', // Аудио битрейт
+        '-shortest', // Қысқа болғанына қарап
+        '-y', // Қайта жазу
+        escapedOutput,
       ]);
     }
-
-    ffmpegArgs.addAll([
-      '-c:v', 'libx264', // Видео кодек
-      '-preset', 'fast', // Жылдам кодтау
-      '-crf', '23', // Сапа
-      '-c:a', 'aac', // MP3 → AAC (кейбір MP3 форматтары copy режимінде жұмыс істемейді)
-      '-b:a', '128k', // Аудио битрейт
-      '-shortest', // Қысқа болғанына қарап
-      '-y', // Қайта жазу
-      escapedOutput,
-    ]);
 
     final command = ffmpegArgs.join(' ');
     print('Running FFmpeg: $command'); // Log the command
@@ -265,12 +402,12 @@ class VideoSplitterService {
       final output = await session.getOutput();
       final logs = await session.getLogs();
       final logContent = logs.map((l) => l.getMessage()).join('\n');
-      
+
       // Get last few lines of log for meaningful error
-      final errorSnippet = logContent.length > 500 
-          ? logContent.substring(logContent.length - 500) 
+      final errorSnippet = logContent.length > 500
+          ? logContent.substring(logContent.length - 500)
           : logContent;
-          
+
       print('FFmpeg FAILURE LOG:\n$logContent'); // Print full log to console
       throw Exception('FFmpeg merged failed: $errorSnippet');
     }
@@ -290,11 +427,23 @@ class VideoSplitterService {
   }) async {
     // Барлық merged видеоларды тізімге жинау
     final dir = Directory(mergedVideoDir);
+
+    // Каталог бар екенін тексеру
+    if (!await dir.exists()) {
+      print('❌ Directory does not exist: $mergedVideoDir');
+      throw Exception('Біріктіру үшін каталог табылмады: $mergedVideoDir');
+    }
+
     final files = await dir
         .list()
         .where((e) => e is File && e.path.endsWith('.mp4'))
         .cast<File>()
         .toList();
+
+    print('📁 Found ${files.length} MP4 files in $mergedVideoDir');
+    if (files.isNotEmpty) {
+      print('📄 First few files: ${files.take(3).map((f) => p.basename(f.path)).join(', ')}');
+    }
 
     // Сұрыптау - МАҢЫЗДЫ: Файл аттарынан нөмірді алып, сандық мән бойынша сұрыптау керек!
     // merged_1.mp4, merged_2.mp4, ..., merged_10.mp4 деген тәртіп болу үшін
@@ -314,6 +463,12 @@ class VideoSplitterService {
     });
 
     if (files.isEmpty) {
+      // Каталогтағы барлық файлдарды көрсету
+      final allFiles = await dir.list().toList();
+      print('❌ No MP4 files found. All files in directory:');
+      for (final file in allFiles) {
+        print('  - ${p.basename(file.path)}');
+      }
       throw Exception('Біріктіру үшін видео файлдар табылмады');
     }
 
@@ -339,6 +494,7 @@ class VideoSplitterService {
     final escapedOutputPath = _escapePath(outputPath);
 
     final concatArgs = [
+      '-loglevel', 'error', // Hide verbose progress output
       '-f', 'concat',
       '-safe', '0',
       '-i', escapedConcatListPath,
@@ -360,6 +516,7 @@ class VideoSplitterService {
 
     // Содан кейін жылдамдатып соңғы файлға жазу
     final speedArgs = [
+      '-loglevel', 'error', // Hide verbose progress output
       '-i', escapedTempMergedPath,
       '-filter_complex', '[0:v]setpts=${1.0 / speedMultiplier}*PTS[v];[0:a]atempo=$speedMultiplier[a]',
       '-map', '[v]',

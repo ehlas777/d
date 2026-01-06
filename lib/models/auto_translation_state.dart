@@ -1,6 +1,4 @@
-import 'translation_models.dart';
-
-/// Processing stage enum
+/// Processing stage enum (overall project stage)
 enum ProcessingStage {
   idle,
   transcribing,
@@ -12,6 +10,22 @@ enum ProcessingStage {
   completed,
   paused,
   failed,
+}
+
+/// Per-segment stage enum (individual segment processing stage)
+enum SegmentStage {
+  pending,          // Transcription күтуде
+  transcribed,      // Translation дайын
+  translating,      // Translation процесі
+  translated,       // TTS дайын
+  generatingTts,    // TTS процесі
+  ttsReady,        // Cutting дайын
+  cuttingVideo,    // Cutting процесі
+  cutReady,        // Merging дайын
+  merging,         // Merging процесі
+  merged,          // Assembly дайын
+  completed,       // Аяқталды
+  failed,          // Қате
 }
 
 /// Extension for user-friendly stage names
@@ -42,24 +56,64 @@ extension ProcessingStageExtension on ProcessingStage {
   }
 }
 
+/// Extension for user-friendly segment stage names
+extension SegmentStageExtension on SegmentStage {
+  String get displayName {
+    switch (this) {
+      case SegmentStage.pending:
+        return 'Күтуде';
+      case SegmentStage.transcribed:
+        return 'Транскрипция дайын';
+      case SegmentStage.translating:
+        return 'Аударылуда';
+      case SegmentStage.translated:
+        return 'Аударма дайын';
+      case SegmentStage.generatingTts:
+        return 'Аудио жасалуда';
+      case SegmentStage.ttsReady:
+        return 'Аудио дайын';
+      case SegmentStage.cuttingVideo:
+        return 'Кесілуде';
+      case SegmentStage.cutReady:
+        return 'Кесу дайын';
+      case SegmentStage.merging:
+        return 'Біріктірілуде';
+      case SegmentStage.merged:
+        return 'Біріктіру дайын';
+      case SegmentStage.completed:
+        return 'Дайын';
+      case SegmentStage.failed:
+        return 'Қате';
+    }
+  }
+}
+
 /// Individual segment processing state
 class SegmentProcessingState {
   final int index;
   final String originalText;
-  
-  // Processing states
+
+  // Timing information from transcription
+  final double? segmentStartTime;   // Start time in seconds from TranscriptionSegment.start
+  final double? segmentEndTime;     // End time in seconds from TranscriptionSegment.end
+  final double? segmentDuration;    // Duration in seconds (end - start)
+
+  // Current stage of this segment
+  SegmentStage currentStage;
+
+  // Processing states (legacy - kept for backward compatibility)
   bool transcriptionComplete;
   bool translationComplete;
   bool ttsComplete;
   bool videoCutComplete;
   bool mergeComplete;
-  
+
   // Results
   String? translatedText;
   String? audioPath;
   String? videoSegmentPath;
   String? mergedSegmentPath;
-  
+
   // Error tracking
   String? errorMessage;
   int retryCount;
@@ -67,6 +121,10 @@ class SegmentProcessingState {
   SegmentProcessingState({
     required this.index,
     required this.originalText,
+    this.segmentStartTime,
+    this.segmentEndTime,
+    this.segmentDuration,
+    this.currentStage = SegmentStage.pending,
     this.transcriptionComplete = false,
     this.translationComplete = false,
     this.ttsComplete = false,
@@ -81,17 +139,34 @@ class SegmentProcessingState {
   });
 
   bool get isComplete =>
-      transcriptionComplete &&
-      translationComplete &&
-      ttsComplete &&
-      videoCutComplete &&
-      mergeComplete;
+      currentStage == SegmentStage.completed ||
+      (transcriptionComplete &&
+          translationComplete &&
+          ttsComplete &&
+          videoCutComplete &&
+          mergeComplete);
 
-  bool get hasFailed => errorMessage != null;
+  bool get hasFailed => currentStage == SegmentStage.failed || errorMessage != null;
+
+  // Helper methods for stage-based processing
+  bool get canTranslate => currentStage == SegmentStage.transcribed;
+  bool get canGenerateTts => currentStage == SegmentStage.translated;
+  bool get canCutVideo =>
+      currentStage == SegmentStage.ttsReady &&
+      segmentStartTime != null &&
+      segmentEndTime != null;
+  bool get canMerge =>
+      currentStage == SegmentStage.cutReady &&
+      audioPath != null &&
+      videoSegmentPath != null;
 
   Map<String, dynamic> toJson() => {
         'index': index,
         'originalText': originalText,
+        'segmentStartTime': segmentStartTime,
+        'segmentEndTime': segmentEndTime,
+        'segmentDuration': segmentDuration,
+        'currentStage': currentStage.name,
         'transcriptionComplete': transcriptionComplete,
         'translationComplete': translationComplete,
         'ttsComplete': ttsComplete,
@@ -109,6 +184,15 @@ class SegmentProcessingState {
     return SegmentProcessingState(
       index: json['index'] as int,
       originalText: json['originalText'] as String,
+      segmentStartTime: json['segmentStartTime'] as double?,
+      segmentEndTime: json['segmentEndTime'] as double?,
+      segmentDuration: json['segmentDuration'] as double?,
+      currentStage: json['currentStage'] != null
+          ? SegmentStage.values.firstWhere(
+              (e) => e.name == json['currentStage'],
+              orElse: () => SegmentStage.pending,
+            )
+          : SegmentStage.pending,
       transcriptionComplete: json['transcriptionComplete'] as bool? ?? false,
       translationComplete: json['translationComplete'] as bool? ?? false,
       ttsComplete: json['ttsComplete'] as bool? ?? false,
@@ -124,6 +208,7 @@ class SegmentProcessingState {
   }
 
   SegmentProcessingState copyWith({
+    SegmentStage? currentStage,
     bool? transcriptionComplete,
     bool? translationComplete,
     bool? ttsComplete,
@@ -139,6 +224,10 @@ class SegmentProcessingState {
     return SegmentProcessingState(
       index: index,
       originalText: originalText,
+      segmentStartTime: segmentStartTime,
+      segmentEndTime: segmentEndTime,
+      segmentDuration: segmentDuration,
+      currentStage: currentStage ?? this.currentStage,
       transcriptionComplete: transcriptionComplete ?? this.transcriptionComplete,
       translationComplete: translationComplete ?? this.translationComplete,
       ttsComplete: ttsComplete ?? this.ttsComplete,

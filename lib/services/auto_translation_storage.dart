@@ -21,7 +21,7 @@ class AutoTranslationStorage {
       // Update project list
       await _addToProjectList(state.projectId);
       
-      print('✅ State saved for project: ${state.projectId}');
+      // print('✅ State saved for project: ${state.projectId}');
     } catch (e) {
       print('❌ Failed to save state: $e');
       rethrow;

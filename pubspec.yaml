@@ -70,7 +70,18 @@ dependencies:
 
   # Audio player for TTS playback
   audioplayers: ^6.1.0
-  
+
+  # Background audio playback with lock screen controls
+  audio_service: ^0.18.12
+  just_audio: ^0.9.36
+  just_audio_background: ^0.0.1-beta.11
+
+  # Local notifications with progress indicators
+  flutter_local_notifications: ^17.0.0
+
+  # Prevent device sleep during processing
+  wakelock_plus: ^1.2.5
+
   # Google Fonts for PolyDub branding
   google_fonts: ^6.2.1
   

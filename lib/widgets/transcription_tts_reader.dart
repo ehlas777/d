@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'dart:io';
 import 'dart:convert';
 import 'package:path_provider/path_provider.dart';
-import 'package:audioplayers/audioplayers.dart';
 import '../config/app_theme.dart';
 import '../models/transcription_result.dart';
 import '../services/openai_tts_service.dart';
+import '../services/background_audio_service.dart';
 
 class TranscriptionTtsReader extends StatefulWidget {
   final TranscriptionResult result;
@@ -31,7 +31,7 @@ class TranscriptionTtsReader extends StatefulWidget {
 
 class _TranscriptionTtsReaderState extends State<TranscriptionTtsReader> {
   late OpenAiTtsService _ttsService;
-  late AudioPlayer _audioPlayer;
+  final BackgroundAudioService _audioService = BackgroundAudioService.instance;
   List<String> _voices = [];
   String? _selectedVoice;
   double _speed = 1.0;
@@ -52,7 +52,7 @@ class _TranscriptionTtsReaderState extends State<TranscriptionTtsReader> {
       baseUrl: widget.baseUrl,
       authToken: widget.authToken,
     );
-    _audioPlayer = AudioPlayer();
+    _audioService.initialize();
     _totalSegments = widget.result.segments.length;
     _loadVoices();
     _loadExistingAudio();
@@ -71,9 +71,18 @@ class _TranscriptionTtsReaderState extends State<TranscriptionTtsReader> {
       return;
     }
     try {
-      await _audioPlayer.stop();
-      await _audioPlayer.play(DeviceFileSource(file.path));
-    } catch (_) {}
+      await _audioService.stop();
+      await _audioService.play(file);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Аудио ойнату қатесі: $e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    }
   }
 
   Future<void> _showSegmentEditor(int index) async {
@@ -227,7 +236,7 @@ class _TranscriptionTtsReaderState extends State<TranscriptionTtsReader> {
   @override
   void dispose() {
     _ttsService.dispose();
-    _audioPlayer.dispose();
+    _audioService.dispose();
     super.dispose();
   }
 
