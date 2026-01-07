@@ -72,6 +72,7 @@ class AutomaticTranslationOrchestrator {
     required String targetLanguage,
     String? sourceLanguage,
     String? voice,
+    double? videoSpeed, // User's video speed preference
     TranscriptionResult? existingTranscriptionResult,
     bool resumeFromSaved = false,
     String? projectId,
@@ -94,6 +95,7 @@ class AutomaticTranslationOrchestrator {
           targetLanguage: targetLanguage,
           sourceLanguage: sourceLanguage,
           voice: voice,
+          videoSpeed: videoSpeed,
           existingTranscriptionResult: existingTranscriptionResult,
         );
       }
@@ -168,6 +170,7 @@ class AutomaticTranslationOrchestrator {
     required String targetLanguage,
     String? sourceLanguage,
     String? voice,
+    double? videoSpeed,
     TranscriptionResult? existingTranscriptionResult,
   }) async {
     final projectId = const Uuid().v4();
@@ -202,6 +205,7 @@ class AutomaticTranslationOrchestrator {
       targetLanguage: targetLanguage,
       sourceLanguage: sourceLanguage ?? existingTranscriptionResult?.detectedLanguage,
       voice: voice,
+      videoSpeed: videoSpeed ?? 1.2, // Default to 1.2x if not provided
       currentStage: existingTranscriptionResult != null
           ? ProcessingStage.translating
           : ProcessingStage.idle,
@@ -909,10 +913,13 @@ class AutomaticTranslationOrchestrator {
     final appDir = await getApplicationDocumentsDirectory();
     final finalPath = '${appDir.path}/final_${_currentState!.projectId}.mp4';
 
+    // Use user's video speed preference (default to 1.0 if not set)
+    final speedMultiplier = _currentState!.videoSpeed ?? 1.0;
+    
     await videoSplitter.concatenateAndSpeedUp(
       mergedVideoDir: _currentState!.mergedVideoDir!,
       outputPath: finalPath,
-      speedMultiplier: 1.0,
+      speedMultiplier: speedMultiplier,
       onProgress: (progress) {
         _emitProgress(
           onProgress,

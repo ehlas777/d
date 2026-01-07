@@ -1590,9 +1590,11 @@ class _HomeScreenState extends State<HomeScreen> {
     }
 
     // Merge stage (show on merge or completed step)
+    // HIDE if automatic translation already completed (finalVideoPath exists)
     if ((currentStep == ProjectStep.merge || currentStep == ProjectStep.completed) &&
         _result != null &&
-        project != null) {
+        project != null &&
+        _finalVideoPath == null) { // Only show if automatic translation hasn't completed
       // МАҢЫЗДЫ: Біріктіру панелін merge немесе completed қадамында көрсету
       // merge қадамы басылғанда біріктіру панелі ашылады
       if (currentStep == ProjectStep.merge || currentStep == ProjectStep.completed) {
@@ -1792,6 +1794,7 @@ class _HomeScreenState extends State<HomeScreen> {
           videoFile: videoFile,
           targetLanguage: targetLanguage,
           voice: voice,
+          videoSpeed: speed, // Pass user's video speed preference
           existingTranscriptionResult: _result, // Pass existing transcription
           onProgress: (progress) {
             if (mounted) {
@@ -1802,14 +1805,38 @@ class _HomeScreenState extends State<HomeScreen> {
           },
         );
         
+        
         if (mounted) {
+          // Check if pipeline completed successfully or had failures
+          final failedSegments = result.segments
+              .where((s) => s.currentStage == SegmentStage.failed)
+              .toList();
+          
+          final hasFailures = failedSegments.isNotEmpty;
+          
           setState(() {
-            _automaticLogs.add('✓ Automatic translation pipeline complete!');
-            _automaticLogs.add('Final video: ${result.finalVideoPath ?? "N/A"}');
+            if (hasFailures) {
+              // Keep monitor visible on failure
+              _automaticLogs.add('❌ Pipeline completed with ${failedSegments.length} failed segment(s)');
+              for (final seg in failedSegments) {
+                _automaticLogs.add('   Seg ${seg.index + 1}: ${seg.errorMessage ?? "Unknown error"}');
+              }
+              // Monitor stays visible (_useAutomaticMode remains true)
+            } else {
+              // Success - hide monitor and auto-save
+              _automaticLogs.add('✓ Automatic translation pipeline complete!');
+              _automaticLogs.add('Final video: ${result.finalVideoPath ?? "N/A"}');
+              _useAutomaticMode = false; // Hide monitor after successful completion
+            }
+            
             _finalVideoPath = result.finalVideoPath;
             _isTranslating = false;
-            _useAutomaticMode = false; // Hide monitor after completion
           });
+
+          // Auto-save on success only
+          if (!hasFailures && result.finalVideoPath != null) {
+            await _autoSaveFinalVideo(result.finalVideoPath!);
+          }
 
           // Calculate total TTS audio duration for logging
           final authProvider = Provider.of<AuthProvider>(context, listen: false);
@@ -2884,6 +2911,58 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }
+    }
+  }
+
+  /// Automatically save final video to platform-specific location
+  Future<void> _autoSaveFinalVideo(String sourcePath) async {
+    try {
+      // Initialize notification service
+      final notificationService = LocalNotificationService();
+      await notificationService.initialize();
+      await notificationService.requestPermissions();
+
+      if (Platform.isMacOS) {
+        // macOS: Save to Downloads folder
+        final home = Platform.environment['HOME'];
+        if (home == null) {
+          throw Exception('Could not determine home directory');
+        }
+        
+        final downloadsPath = '$home/Downloads';
+        final downloadsDir = Directory(downloadsPath);
+        if (!await downloadsDir.exists()) {
+          await downloadsDir.create(recursive: true);
+        }
+        
+        final fileName = 'translated_video_${DateTime.now().millisecondsSinceEpoch}.mp4';
+        final targetPath = '$downloadsPath/$fileName';
+        
+        final sourceFile = File(sourcePath);
+        await sourceFile.copy(targetPath);
+        
+        // Show notification
+        await notificationService.showVideoSavedNotification(
+          title: 'Video Saved Successfully',
+          body: 'Location: ~/Downloads/$fileName',
+        );
+        
+        print('✅ Video auto-saved to: $targetPath');
+      } else if (Platform.isIOS || Platform.isAndroid) {
+        // iOS/Android: Save to gallery
+        await Gal.putVideo(sourcePath);
+        
+        // Show notification
+        await notificationService.showVideoSavedNotification(
+          title: 'Video Saved Successfully',
+          body: 'Saved to Gallery',
+        );
+        
+        print('✅ Video auto-saved to Gallery');
+      }
+    } catch (e) {
+      print('❌ Auto-save failed: $e');
+      // Don't show error to user since this is automatic
     }
   }
 

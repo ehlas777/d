@@ -250,6 +250,7 @@ class AutoTranslationState {
   final String targetLanguage;
   final String? sourceLanguage;
   final String? voice;
+  final double? videoSpeed; // User's video speed preference (e.g., 1.2x)
   
   ProcessingStage currentStage;
   List<SegmentProcessingState> segments;
@@ -275,6 +276,7 @@ class AutoTranslationState {
     required this.targetLanguage,
     this.sourceLanguage,
     this.voice,
+    this.videoSpeed,
     required this.currentStage,
     required this.segments,
     required this.startedAt,
@@ -308,6 +310,7 @@ class AutoTranslationState {
         'targetLanguage': targetLanguage,
         'sourceLanguage': sourceLanguage,
         'voice': voice,
+        'videoSpeed': videoSpeed,
         'currentStage': currentStage.name,
         'segments': segments.map((s) => s.toJson()).toList(),
         'startedAt': startedAt.toIso8601String(),
@@ -328,6 +331,7 @@ class AutoTranslationState {
       targetLanguage: json['targetLanguage'] as String,
       sourceLanguage: json['sourceLanguage'] as String?,
       voice: json['voice'] as String?,
+      videoSpeed: json['videoSpeed'] as double?,
       currentStage: ProcessingStage.values.firstWhere(
         (e) => e.name == json['currentStage'],
         orElse: () => ProcessingStage.idle,
