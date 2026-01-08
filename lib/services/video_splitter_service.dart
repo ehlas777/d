@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as p;
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
@@ -7,9 +9,75 @@ import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import '../models/transcription_result.dart';
 
 class VideoSplitterService {
+  /// Check if running on mobile platform
+  bool get _isMobile => Platform.isIOS || Platform.isAndroid;
+  
   /// FFmpeg жолдары үшін бірлік тырнақшаларға орау (пробел/юникод қауіпсіз)
   String _escapePath(String path) {
     return "'${path.replaceAll("'", "\\'")}'";
+  }
+
+  /// Extract audio from video file (16kHz mono WAV for Whisper)
+  Future<String> extractAudio(File videoFile) async {
+    try {
+      final tempDir = await getTemporaryDirectory();
+      final audioPath = '${tempDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.wav';
+
+      // Extract audio as 16kHz mono WAV (required by Whisper)
+      print('Extracting audio with FFmpeg...');
+      print('Video path: ${videoFile.path}');
+      print('Output path: $audioPath');
+
+      // Determine timeout based on platform
+      // Mobile devices need more time for processing
+      final timeoutDuration = _isMobile 
+          ? const Duration(minutes: 30) 
+          : const Duration(minutes: 2);
+
+      // Build FFmpeg command
+      final arguments = [
+        '-i', videoFile.path,
+        '-ar', '16000',
+        '-ac', '1',
+        '-c:a', 'pcm_s16le',
+        // Optimizations for mobile/iOS
+        if (_isMobile) ...[
+          '-max_muxing_queue_size', '1024',
+          '-threads', '2', // Limit threads on mobile to prevent OOM
+        ],
+        '-y',
+        audioPath,
+      ];
+      print('FFmpeg arguments: $arguments');
+      
+      // Execute with timeout
+      final session = await FFmpegKit.executeWithArguments(arguments).timeout(
+        timeoutDuration,
+        onTimeout: () {
+          print('⚠️ FFmpeg audio extraction timed out after ${timeoutDuration.inMinutes} minutes');
+          // We can't cancel the static future easily, but we can throw to stop the flow
+          throw TimeoutException('FFmpeg audio extraction timed out');
+        },
+      );
+
+      final returnCode = await session.getReturnCode();
+
+      if (ReturnCode.isSuccess(returnCode)) {
+        print('Audio extraction successful: $audioPath');
+        return audioPath;
+      } else {
+        final logs = await session.getAllLogsAsString();
+        print('FFmpeg failed with logs: $logs');
+        // Handle specific FFmpeg errors
+        if (logs != null && logs.contains('No such file or directory')) {
+          throw Exception('Video file not found: ${videoFile.path}');
+        }
+        throw Exception('FFmpeg failed with return code $returnCode.\nLogs: $logs');
+      }
+    } catch (e) {
+      print('Audio extraction error: $e');
+      rethrow;
+    }
   }
 
   /// Сегменттерді біріктіру: сегмент санына қарай топтау логикасы
@@ -131,7 +199,7 @@ class VideoSplitterService {
     return outDir.path;
   }
 
-  /// FFmpeg қолдану арқылы видеоны кесу
+  /// FFmpeg қолдану арқылы видеоны кесу (timeout protection қосылған)
   Future<void> _splitVideoSegment({
     required String videoPath,
     required double startTime,
@@ -151,21 +219,49 @@ class VideoSplitterService {
     final escapedInput = _escapePath(videoPath);
     final escapedOutput = _escapePath(outputPath);
 
-    args.addAll([
-      '-loglevel', 'error', // Hide verbose progress output
-      '-i', escapedInput,
-      '-t', duration.toStringAsFixed(3),
-      '-c:v', 'libx264',
-      '-preset', 'fast',
-      '-crf', '23',
-      '-c:a', 'aac',
-      '-b:a', '128k',
-      '-y', // Қайта жазу
-      escapedOutput,
-    ]);
+    // Mobile-optimized FFmpeg settings to reduce memory usage
+    if (_isMobile) {
+      args.addAll([
+        '-loglevel', 'error',
+        '-i', escapedInput,
+        '-t', duration.toStringAsFixed(3),
+        '-c:v', 'libx264',
+        '-preset', 'ultrafast',  // Less memory, faster
+        '-threads', '1',         // Single thread for mobile
+        '-crf', '28',            // Lower quality = less memory
+        '-c:a', 'aac',
+        '-b:a', '96k',           // Lower bitrate
+        '-bufsize', '512k',      // Smaller buffer
+        '-maxrate', '1500k',     // Rate limit
+        '-y',
+        escapedOutput,
+      ]);
+    } else {
+      // Desktop: higher quality settings
+      args.addAll([
+        '-loglevel', 'error',
+        '-i', escapedInput,
+        '-t', duration.toStringAsFixed(3),
+        '-c:v', 'libx264',
+        '-preset', 'fast',
+        '-crf', '23',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-y',
+        escapedOutput,
+      ]);
+    }
 
     final command = args.join(' ');
-    final session = await FFmpegKit.execute(command);
+    
+    // iOS timeout protection: 60 seconds max per segment cut
+    final session = await FFmpegKit.execute(command).timeout(
+      const Duration(seconds: 60),
+      onTimeout: () {
+        throw Exception('FFmpeg timeout: Video cut took longer than 60 seconds');
+      },
+    );
+    
     final returnCode = await session.getReturnCode();
 
     if (!ReturnCode.isSuccess(returnCode)) {
@@ -189,6 +285,11 @@ class VideoSplitterService {
     final output = await session.getOutput();
     final durationStr = (output ?? '').trim();
     return double.tryParse(durationStr) ?? 0.0;
+  }
+
+  /// Видео файлының ұзындығын алу (секундпен)
+  Future<double> getVideoDuration(String videoPath) async {
+    return getAudioDuration(videoPath); // Reuse same logic as it works for video containers too
   }
 
   /// Видео файлының видео ағыны бар екенін тексеру
@@ -395,7 +496,14 @@ class VideoSplitterService {
     final command = ffmpegArgs.join(' ');
     print('Running FFmpeg: $command'); // Log the command
 
-    final session = await FFmpegKit.execute(command);
+    // iOS timeout protection: 90 seconds max per merge operation
+    final session = await FFmpegKit.execute(command).timeout(
+      const Duration(seconds: 90),
+      onTimeout: () {
+        throw Exception('FFmpeg timeout: Video merge took longer than 90 seconds');
+      },
+    );
+    
     final returnCode = await session.getReturnCode();
 
     if (!ReturnCode.isSuccess(returnCode)) {
@@ -504,7 +612,19 @@ class VideoSplitterService {
     ];
 
     final concatCommand = concatArgs.join(' ');
-    final concatSession = await FFmpegKit.execute(concatCommand);
+    
+    // iOS timeout protection: Mobile needs more time for concat
+    final concatTimeout = _isMobile
+        ? const Duration(minutes: 5)  // Mobile: longer timeout
+        : const Duration(minutes: 3); // Desktop
+    
+    final concatSession = await FFmpegKit.execute(concatCommand).timeout(
+      concatTimeout,
+      onTimeout: () {
+        throw Exception('FFmpeg timeout: Video concatenation took longer than ${concatTimeout.inMinutes} min');
+      },
+    );
+    
     final concatReturnCode = await concatSession.getReturnCode();
 
     if (!ReturnCode.isSuccess(concatReturnCode)) {
@@ -531,7 +651,19 @@ class VideoSplitterService {
     ];
 
     final speedCommand = speedArgs.join(' ');
-    final speedSession = await FFmpegKit.execute(speedCommand);
+    
+    // iOS timeout protection: Mobile needs more time for speed adjustment
+    final timeoutDuration = _isMobile 
+        ? const Duration(minutes: 5)  // Mobile: longer timeout
+        : const Duration(minutes: 3); // Desktop: shorter timeout
+    
+    final speedSession = await FFmpegKit.execute(speedCommand).timeout(
+      timeoutDuration,
+      onTimeout: () {
+        throw Exception('FFmpeg timeout: Speed adjustment took longer than ${timeoutDuration.inMinutes} min');
+      },
+    );
+    
     final speedReturnCode = await speedSession.getReturnCode();
 
     if (!ReturnCode.isSuccess(speedReturnCode)) {

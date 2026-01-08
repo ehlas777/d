@@ -84,10 +84,19 @@ class User {
   final String name;
   final String? subscriptionStatus;
   final DateTime? subscriptionExpiry;
+  
+  // Legacy fields (kept for backwards compatibility)
   final double? freeMinutesLimit;
   final double? remainingFreeMinutes;
   final double? paidMinutesLimit;
   final double? remainingPaidMinutes;
+  
+  // Two-Bucket system fields (NEW)
+  final double? dailyRemainingMinutes;  // Күнделікті қалған (resets daily UTC 00:00)
+  final double? extraMinutes;           // Bonus минуттар (never resets)
+  final double? totalLimit;             // Күнделікті лимит
+  final double? usedMinutes;            // Бүгін қолданылған
+  
   final bool? hasUnlimitedAccess;
   final double? maxVideoDuration;
 
@@ -101,6 +110,10 @@ class User {
     this.remainingFreeMinutes,
     this.paidMinutesLimit,
     this.remainingPaidMinutes,
+    this.dailyRemainingMinutes,
+    this.extraMinutes,
+    this.totalLimit,
+    this.usedMinutes,
     this.hasUnlimitedAccess,
     this.maxVideoDuration,
   });
@@ -116,20 +129,33 @@ class User {
         ? DateTime.tryParse(subscriptionExpiryRaw.toString())
         : null;
 
-    // Legacy/paid/free minutes
+    bool? hasUnlimitedAccess = json['hasUnlimitedAccess'] == true;
+
+    // Two-Bucket system fields (NEW)
+    final dailyRemainingMinutes = _toDouble(json['dailyRemainingMinutes']);
+    final extraMinutes = _toDouble(json['extraMinutes']);
+    final totalLimit = _toDouble(json['totalLimit']);
+    final usedMinutes = _toDouble(json['usedMinutes']);
+    
+    // Legacy balance field  
+    final balanceMinutes = _toDouble(json['balanceMinutes']);
+
+    // Map to legacy fields for backwards compatibility
     double? freeMinutesLimit = _toDouble(json['freeMinutesLimit']);
     double? remainingFreeMinutes = _toDouble(json['remainingFreeMinutes']);
     double? paidMinutesLimit = _toDouble(json['paidMinutesLimit']);
     double? remainingPaidMinutes = _toDouble(json['remainingPaidMinutes']);
-    bool? hasUnlimitedAccess = json['hasUnlimitedAccess'] == true;
 
-    // New TranslationStats minutes fields
-    final balanceMinutes = _toDouble(json['balanceMinutes']);
-    final totalLimit = _toDouble(json['totalLimit']);
-    final usedMinutes = _toDouble(json['usedMinutes']);
-
-    // If new fields are present, map them into the legacy structure the UI expects
-    if (totalLimit != null || balanceMinutes != null || usedMinutes != null) {
+    // If two-bucket fields present, map to legacy structure for UI compatibility
+    if (dailyRemainingMinutes != null || extraMinutes != null || totalLimit != null) {
+      freeMinutesLimit = totalLimit ?? freeMinutesLimit;
+      // Map dailyRemaining to "free" (UI показывает как основной баланс)
+      remainingFreeMinutes = dailyRemainingMinutes ?? remainingFreeMinutes;
+      // Map extraMinutes to "paid" (UI показывает как дополнительный баланс)
+      paidMinutesLimit = extraMinutes ?? 0.0;
+      remainingPaidMinutes = extraMinutes ?? 0.0;
+    } else if (balanceMinutes != null || totalLimit != null || usedMinutes != null) {
+      // Legacy fallback: old backend response
       freeMinutesLimit = totalLimit ?? freeMinutesLimit;
       if (balanceMinutes != null) {
         remainingFreeMinutes = balanceMinutes;
@@ -153,6 +179,10 @@ class User {
       remainingFreeMinutes: remainingFreeMinutes,
       paidMinutesLimit: paidMinutesLimit,
       remainingPaidMinutes: remainingPaidMinutes,
+      dailyRemainingMinutes: dailyRemainingMinutes,
+      extraMinutes: extraMinutes,
+      totalLimit: totalLimit,
+      usedMinutes: usedMinutes,
       hasUnlimitedAccess: hasUnlimitedAccess,
       maxVideoDuration: maxVideoDuration,
     );
@@ -168,6 +198,10 @@ class User {
         'remainingFreeMinutes': remainingFreeMinutes,
         'paidMinutesLimit': paidMinutesLimit,
         'remainingPaidMinutes': remainingPaidMinutes,
+        'dailyRemainingMinutes': dailyRemainingMinutes,
+        'extraMinutes': extraMinutes,
+        'totalLimit': totalLimit,
+        'usedMinutes': usedMinutes,
         'hasUnlimitedAccess': hasUnlimitedAccess,
         'maxVideoDuration': maxVideoDuration,
       };
@@ -191,10 +225,33 @@ class User {
     return (totalRemainingMinutes / total) * 100;
   }
 
-  // Минуттар жеткілікті ме?
+  // Two-Bucket: Total available (daily + extra)
+  double get totalAvailable {
+    if (dailyRemainingMinutes != null || extraMinutes != null) {
+      return (dailyRemainingMinutes ?? 0) + (extraMinutes ?? 0);
+    }
+    // Fallback to legacy
+    return totalRemainingMinutes;
+  }
+
+  // Минуттар жеткілікті ме? (with maxVideoDuration check)
   bool hasEnoughMinutes(double requiredMinutes) {
     if (hasUnlimitedAccess == true) return true;
-    return totalRemainingMinutes >= requiredMinutes;
+    
+    // Check max video duration limit
+    if (maxVideoDuration != null && requiredMinutes > maxVideoDuration!) {
+      return false;
+    }
+    
+    // Check total available balance
+    return totalAvailable >= requiredMinutes;
+  }
+
+  // Get remaining daily minutes
+  double getRemainingDailyMinutes() {
+    // Backend returns authoritative remaining minutes in remainingFreeMinutes/remainingPaidMinutes
+    // minutesUsedToday is just for display/stats, not for calculation
+    return totalRemainingMinutes;
   }
 
   static double? _toDouble(dynamic value) {

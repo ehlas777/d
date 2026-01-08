@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:google_fonts/google_fonts.dart';
 import 'dart:convert';
 import '../config/app_theme.dart';
 import '../l10n/app_localizations.dart';
@@ -10,6 +11,7 @@ import '../models/transcription_result.dart';
 import '../providers/auth_provider.dart';
 import '../services/backend_translation_service.dart';
 import '../services/translation_progress_storage.dart';
+import '../screens/subscription_screen.dart';
 
 class TranslationPanel extends StatefulWidget {
   final TranscriptionResult transcriptionResult;
@@ -409,6 +411,34 @@ class _TranslationPanelState extends State<TranslationPanel> {
   Future<void> _startTranslation() async {
     final authProvider = Provider.of<AuthProvider>(context, listen: false);
 
+    // Pre-translation limit check (only for logged-in users)
+    if (authProvider.isLoggedIn) {
+      final videoDurationMinutes = widget.transcriptionResult.duration / 60.0;
+      
+      // VIP/Unlimited users bypass limit check
+      if (authProvider.userInfo?.hasUnlimitedAccess != true) {
+        // Refresh user minutes from backend to get most recent balance
+        await authProvider.refreshUserMinutes();
+        
+        // Debug: print balance information
+        debugPrint('=== PRE-TRANSLATION LIMIT CHECK ===');
+        debugPrint('Video duration: ${videoDurationMinutes.toStringAsFixed(2)} min');
+        debugPrint('Total remaining: ${authProvider.userInfo?.totalRemainingMinutes.toStringAsFixed(2)} min');
+        debugPrint('Free remaining: ${authProvider.userInfo?.remainingFreeMinutes?.toStringAsFixed(2)} min');
+        debugPrint('Paid remaining: ${authProvider.userInfo?.remainingPaidMinutes?.toStringAsFixed(2)} min');
+        debugPrint('Has enough? ${authProvider.hasEnoughMinutes(videoDurationMinutes)}');
+        
+        // Check if user has enough minutes for this video
+        if (!authProvider.hasEnoughMinutes(videoDurationMinutes)) {
+          // Show error and stop translation
+          if (mounted) {
+            _showInsufficientMinutesDialog(videoDurationMinutes);
+          }
+          return; // Stop translation process
+        }
+      }
+    }
+
     setState(() {
       _isTranslating = true;
       _errorMessage = null;
@@ -594,6 +624,45 @@ class _TranslationPanelState extends State<TranslationPanel> {
       return int.tryParse(match.group(1)!);
     }
     return null;
+  }
+
+  void _showInsufficientMinutesDialog(double requiredMinutes) {
+    final l10n = AppLocalizations.of(context);
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          l10n.translate('insufficient_minutes') ?? 'Insufficient Minutes',
+          style: GoogleFonts.inter(fontWeight: FontWeight.bold),
+        ),
+        content: Text(
+          l10n.translate('insufficient_minutes_message')
+            ?.replaceAll('{0}', requiredMinutes.toStringAsFixed(2)) 
+          ?? 'This video requires ${requiredMinutes.toStringAsFixed(2)} minutes, but you don\'t have enough balance. Please upgrade your subscription.',
+          style: GoogleFonts.inter(),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(l10n.translate('cancel') ?? 'Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SubscriptionScreen()),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.accentColor,
+              foregroundColor: Colors.white,
+            ),
+            child: Text(l10n.translate('subscribe') ?? 'Subscribe'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

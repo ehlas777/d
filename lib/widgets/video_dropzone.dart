@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:dotted_border/dotted_border.dart';
 import 'package:file_picker/file_picker.dart';
 import '../l10n/app_localizations.dart';
@@ -6,10 +7,12 @@ import '../config/app_theme.dart';
 
 class VideoDropzone extends StatefulWidget {
   final Function(PlatformFile) onFileSelected;
+  final VoidCallback? onSessionExpired; // Callback for session expiry
 
   const VideoDropzone({
     super.key,
     required this.onFileSelected,
+    this.onSessionExpired,
   });
 
   @override
@@ -28,6 +31,19 @@ class _VideoDropzoneState extends State<VideoDropzone> {
 
       if (result != null && result.files.isNotEmpty) {
         widget.onFileSelected(result.files.first);
+      }
+    } on PlatformException catch (e) {
+      // Check for SESSION_NOT_FOUND error
+      if (e.code == 'SESSION_NOT_FOUND' || e.message?.contains('Session not found') == true) {
+        debugPrint('Session expired: ${e.message}');
+        widget.onSessionExpired?.call();
+      } else {
+        debugPrint('Error picking file: $e');
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error selecting file: ${e.message ?? e.code}')),
+          );
+        }
       }
     } catch (e) {
       debugPrint('Error picking file: $e');

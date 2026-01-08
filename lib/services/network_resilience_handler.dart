@@ -13,7 +13,7 @@ class NetworkResilienceHandler {
       final connectivityResult = await _connectivity.checkConnectivity();
       
       // Check if we have any connectivity (wifi, mobile, etc.)
-      if (connectivityResult == ConnectivityResult.none) {
+      if (connectivityResult.contains(ConnectivityResult.none)) {
         return false;
       }
       
@@ -38,8 +38,13 @@ class NetworkResilienceHandler {
     int maxRetries = 5,
     Duration initialDelay = const Duration(seconds: 2),
     bool checkNetwork = true,
+    List<Duration>? customDelays,
+    bool Function(dynamic error)? shouldRetry,
   }) async {
     int attempt = 0;
+    // If custom delays provided, use them. Otherwise generate exponential backoff.
+    // If customDelays is used, maxRetries is ignored (length of list used)
+    final effectiveMaxRetries = customDelays?.length ?? maxRetries;
     Duration currentDelay = initialDelay;
 
     while (attempt < maxRetries) {
@@ -54,9 +59,15 @@ class NetworkResilienceHandler {
       } catch (e) {
         attempt++;
         
-        if (attempt >= maxRetries) {
-          print('❌ Max retries ($maxRetries) exceeded');
+        if (attempt >= effectiveMaxRetries) {
+          print('❌ Max retries ($effectiveMaxRetries) exceeded');
           rethrow;
+        }
+
+        // Custom retry predicate
+        if (shouldRetry != null && !shouldRetry(e)) {
+           print('⛔ Error not retriable according to predicate: $e');
+           rethrow;
         }
 
         // Log the retry
@@ -66,12 +77,21 @@ class NetworkResilienceHandler {
         // Wait before retrying
         await Future.delayed(currentDelay);
 
-        // Exponential backoff: double the delay each time
-        currentDelay = currentDelay * 2;
-        
-        // Cap at 60 seconds
-        if (currentDelay > const Duration(seconds: 60)) {
-          currentDelay = const Duration(seconds: 60);
+        // Determine delay
+        if (customDelays != null) {
+          // Use specific delay for this attempt (attempt is now 1-based index effectively for previous failure)
+          // attempt was incremented, so retry #1 uses index 0
+          if (attempt - 1 < customDelays.length) {
+             currentDelay = customDelays[attempt - 1];
+          }
+        } else {
+          // Exponential backoff: double the delay each time
+          currentDelay = currentDelay * 2;
+          
+          // Cap at 60 seconds
+          if (currentDelay > const Duration(seconds: 60)) {
+            currentDelay = const Duration(seconds: 60);
+          }
         }
       }
     }

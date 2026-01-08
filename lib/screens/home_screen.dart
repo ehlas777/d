@@ -25,6 +25,8 @@ import '../widgets/transcription_tts_reader.dart';
 import '../widgets/merge_panel.dart';
 import '../widgets/trial_badge_widget.dart';
 import '../widgets/trial_info_card.dart';
+import '../widgets/success_animation_overlay.dart';
+import '../widgets/post_translation_dialog.dart';
 import '../providers/locale_provider.dart';
 import '../providers/auth_provider.dart';
 import '../providers/project_provider.dart';
@@ -48,6 +50,7 @@ import '../models/auto_translation_state.dart';
 import '../services/local_notification_service.dart';
 import 'package:gal/gal.dart';
 import 'subscription_screen.dart';
+import '../exceptions/balance_exceptions.dart';
 
 enum TranscriptionState {
   idle,
@@ -86,9 +89,9 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _translationReady = false; // Show "Next step" only after API translation is done
 
 
-  final _transcriptionService = TranscriptionService();
-  final _videoProcessingService = VideoProcessingService();
   final _videoSplitter = VideoSplitterService();
+  late final _transcriptionService = TranscriptionService(_videoSplitter);
+  final _videoProcessingService = VideoProcessingService();
   bool _isInitialized = false;
   
   // Automatic translation
@@ -102,6 +105,8 @@ class _HomeScreenState extends State<HomeScreen> {
   final BackgroundStateCoordinator _backgroundCoordinator = BackgroundStateCoordinator();
   AppLifecycleState _currentLifecycleState = AppLifecycleState.resumed;
   bool _isInBackgroundMode = false;
+  bool _isAutoMerging = false; // Track automatic merge after TTS
+  bool _autoSaveCompleted = false; // Track if auto-save has completed
 
   @override
   void initState() {
@@ -382,6 +387,7 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       networkHandler: NetworkResilienceHandler(),
       storageManager: StorageManager(),
+      authService: authProvider.authService, // Injected dependency
     );
   }
 
@@ -515,9 +521,41 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void dispose() {
     _transcriptionService.dispose();
+    _orchestrator?.dispose(); // Dispose orchestrator to prevent crashes
     _lifecycleObserver?.detach();
     _backgroundCoordinator.dispose();
     super.dispose();
+  }
+
+  /// Handle session expiration - logout and prompt re-login
+  void _handleSessionExpired() async {
+    if (!mounted) return;
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    
+    // Logout user
+    await authProvider.logout();
+    
+    if (!mounted) return;
+    
+    // Show dialog - user will see login button in app bar after dialog closes
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: const Text('Session Expired'),
+        content: const Text('Your session has expired. Please log in again to continue.'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              // User will see login button in app bar after logout
+            },
+            child: const Text('OK'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _onFileSelected(PlatformFile file) async {
@@ -622,9 +660,109 @@ class _HomeScreenState extends State<HomeScreen> {
       // If shouldProceed == true, continue with guest upload
     }
 
-    // Determine max video duration based on user subscription tier
+    // Check for user limits (Trial, Daily, Balance) BEFORE processing
+    double? videoDuration;
+    try {
+      videoDuration = await _videoProcessingService.getVideoDuration(copied.path!);
+    } catch (e) {
+      print('Error getting video duration: $e');
+      // If we can't get duration, we might fail safe or warn user. 
+      // For now, let's proceed but maybe with a warning or fallback.
+      // But typically if we can't get duration, processing will fail too.
+    }
+
+    if (videoDuration != null) {
+      final durationMinutes = videoDuration / 60.0;
+      
+      // 1. Trial User Checks
+      if (!authProvider.isLoggedIn) {
+        final trialProvider = Provider.of<TrialProvider>(context, listen: false);
+        if (videoDuration > trialProvider.maxVideoDuration) {
+          await _deleteLocalVideo();
+          setState(() {
+            _state = TranscriptionState.idle;
+            _selectedFile = null;
+            _localVideoPath = null;
+          });
+          
+          if (mounted) {
+             _showLimitExceededDialog(
+               title: AppLocalizations.of(context).translate('trial_limit_title') ?? 'Video Too Long',
+               message: 'Trial videos are limited to ${trialProvider.maxVideoDuration} seconds.',
+             );
+          }
+          return;
+        }
+      }
+      // 2. Logged In User Checks
+      else {
+        final userInfo = authProvider.userInfo;
+        final isUnlimited = userInfo?.hasUnlimitedAccess == true;
+        
+        // VIP/Unlimited қолданушылар үшін ешқандай шектеу жоқ
+        if (isUnlimited) {
+          print('✅ VIP/Unlimited user - bypassing all limit checks');
+        } else {
+          // Check Daily Limit (Client-side fast check)
+          // Note: getRemainingDailyMinutes returns authoritative remaining balance from User model
+          final remainingDaily = userInfo?.getRemainingDailyMinutes() ?? 0.0;
+          
+          // Debug logs
+          print('👮 Limit Check:');
+          print('   - Video Duration: ${durationMinutes.toStringAsFixed(2)} min');
+          print('   - Remaining Daily: ${remainingDaily.toStringAsFixed(2)} min');
+          
+          // Strict check: if video is longer than remaining, block it
+          if (durationMinutes > remainingDaily) {
+             await _deleteLocalVideo();
+             setState(() {
+                _state = TranscriptionState.idle;
+                _selectedFile = null;
+                _localVideoPath = null;
+             });
+             
+             if (mounted) {
+               _showLimitExceededDialog(
+                 title: AppLocalizations.of(context).translate('daily_limit_reached') ?? 'Daily Limit Reached',
+                 message: AppLocalizations.of(context).translate('daily_limit_message') ?? 'You have reached your daily usage limit. Please upgrade your plan or wait until tomorrow.',
+               );
+             }
+             return;
+          }
+
+          // Check Total Balance (Server-side authoritative check)
+          // TEMPORARILY DISABLED: Backend /api/user/check-minutes returns 400
+          // We have pre-translation checks that validate balance before translation starts
+          // TODO: Fix backend endpoint or remove this check entirely
+          // final hasBalance = await authProvider.checkMinutesAvailability(durationMinutes);
+          final hasBalance = true; // Skip backend check for now
+          
+          if (!hasBalance) {
+             await _deleteLocalVideo();
+             setState(() {
+                _state = TranscriptionState.idle;
+                _selectedFile = null;
+                _localVideoPath = null;
+             });
+             
+             if (mounted) {
+               _showLimitExceededDialog(
+                 title: AppLocalizations.of(context).translate('insufficient_balance') ?? 'Insufficient Balance',
+                 message: AppLocalizations.of(context).translate('insufficient_balance_message') ?? 'You do not have enough minutes to process this video. Please top up your balance.',
+               );
+             }
+             return;
+          }
+        }
+      }
+    }
+
+    // Determine max video duration based on user subscription tier AND platform
     double maxDuration = 60.0; // Default for non-subscribed users
 
+    // MOBILE OPTIMIZATION: Stricter limits on iOS/Android regardless of subscription
+    final isMobile = Platform.isIOS || Platform.isAndroid;
+    
     // VIP немесе абонементі бар пайдаланушылар үшін trim жоқ
     bool skipTrim = false;
     
@@ -646,6 +784,8 @@ class _HomeScreenState extends State<HomeScreen> {
         maxDuration = authProvider.userInfo!.maxVideoDuration!;
         print('✅ Backend maxVideoDuration: $maxDuration');
       } else {
+        // Mobile: shorter default
+        maxDuration = isMobile ? 120.0 : 60.0;
         print('⚠️ Using default maxDuration: $maxDuration');
         print('   - isLoggedIn: ${authProvider.isLoggedIn}');
         print('   - hasUnlimitedAccess: ${authProvider.userInfo?.hasUnlimitedAccess}');
@@ -666,9 +806,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
     try {
       // Process video - will trim only if it exceeds maxDuration
+      // Pass knownDuration to skip re-probing
       final processingResult = await _videoProcessingService.prepareForTranslation(
         inputPath: copied.path!,
         maxDurationSeconds: maxDuration,
+        knownDuration: videoDuration,
       );
 
 
@@ -712,6 +854,36 @@ class _HomeScreenState extends State<HomeScreen> {
         _errorMessage = 'Видео дайындау сәтсіз: $e';
       });
     }
+  }
+
+  void _showLimitExceededDialog({required String title, required String message}) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(title, style: GoogleFonts.inter(fontWeight: FontWeight.bold)),
+        content: Text(message, style: GoogleFonts.inter()),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(AppLocalizations.of(context).translate('cancel')),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => const SubscriptionScreen()),
+              );
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.accentColor,
+              foregroundColor: Colors.white,
+            ),
+            child: Text(AppLocalizations.of(context).translate('subscribe') ?? 'Subscribe'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _onOptionsChanged(TranscriptionOptions options) {
@@ -888,6 +1060,82 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Show post-translation dialog with usage statistics
+  Future<void> _showPostTranslationDialog(String targetLanguage, double videoDurationMinutes, String videoFilename) async {
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+
+    // Only show for logged-in users
+    if (!authProvider.isLoggedIn) return;
+
+    // Refresh user balance from backend to get updated remaining minutes
+    final refreshSuccess = await authProvider.refreshUserMinutes();
+
+    if (!mounted) return;
+
+    // Get usage stats (calculated from backend values only)
+    final stats = authProvider.getDailyUsageStats();
+
+    // Check if balance refresh failed
+    final balanceRefreshFailed = !refreshSuccess;
+
+    // Show dialog
+    final action = await showDialog<PostTranslationAction>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => PostTranslationDialog(
+        targetLanguage: targetLanguage,
+        minutesUsedToday: stats['usedToday'] ?? 0.0,
+        minutesRemaining: stats['remaining'] ?? 0.0,
+        totalVideoDuration: videoDurationMinutes, // Changed from totalTtsDuration
+        dailyLimit: authProvider.userInfo?.freeMinutesLimit, // Backend daily limit
+        subscriptionType: authProvider.userInfo?.subscriptionStatus, // Standard, Pro, VIP
+        balanceRefreshFailed: balanceRefreshFailed, // Pass refresh status
+      ),
+    );
+    
+    if (!mounted) return;
+    
+    // Handle user's choice
+    if (action == PostTranslationAction.continueTranslation) {
+      // Keep transcription and video, just show translation panel for re-translation
+      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+      final project = projectProvider.currentProject;
+
+      if (project != null) {
+        // Update project to show translation step (same as manual translation flow)
+        final updatedSteps = Map<ProjectStep, StepProgress>.from(project.steps);
+        updatedSteps[ProjectStep.translation] = StepProgress(
+          step: ProjectStep.translation,
+          status: ProjectStatus.inProgress,
+          progress: 0.0,
+          startedAt: updatedSteps[ProjectStep.translation]?.startedAt ?? DateTime.now(),
+        );
+
+        await projectProvider.updateCurrentProject(
+          project.copyWith(
+            currentStep: ProjectStep.translation,
+            steps: updatedSteps,
+            // Clear targetLanguage so user can select a new one
+            targetLanguage: null,
+          ),
+        );
+
+        if (mounted) {
+          setState(() {
+            // Keep transcription result, just reset translation readiness
+            _translationReady = false;
+            _isTranslating = false;
+            // UI will refresh and show translation panel
+          });
+        }
+      }
+
+    } else if (action == PostTranslationAction.clean) {
+      // Clean everything and go back to upload screen
+      _reset();
+    }
+  }
+
   void _reset() {
     final projectProvider = Provider.of<ProjectProvider>(
       context,
@@ -905,6 +1153,7 @@ class _HomeScreenState extends State<HomeScreen> {
       _errorMessage = null;
       _progress = 0.0;
       _translationReady = false;
+      _autoSaveCompleted = false; // Reset auto-save flag
     });
   }
 
@@ -1283,7 +1532,11 @@ class _HomeScreenState extends State<HomeScreen> {
                 return const SizedBox.shrink();
               },
             ),
-            VideoDropzone(onFileSelected: _onFileSelected),
+            if (_state == TranscriptionState.idle || _state == TranscriptionState.error)
+            VideoDropzone(
+              onFileSelected: _onFileSelected,
+              onSessionExpired: _handleSessionExpired,
+            ),
           ],
         );
 
@@ -1473,8 +1726,9 @@ class _HomeScreenState extends State<HomeScreen> {
       // Next-step prompt handled via floating action button; no extra wide button here.
     }
 
-    // Final video download card (show after automatic translation completes)
-    if (_finalVideoPath != null && File(_finalVideoPath!).existsSync()) {
+    // Final video download card (show after automatic translation completes AND auto-save is done)
+    // Hide during auto-merge processing or if auto-save not completed
+    if (_finalVideoPath != null && File(_finalVideoPath!).existsSync() && !_isAutoMerging && _autoSaveCompleted) {
       children.add(
         AppTheme.card(
           child: Padding(
@@ -1501,16 +1755,16 @@ class _HomeScreenState extends State<HomeScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text(
-                            'Аяқталған Видео',
-                            style: TextStyle(
+                          Text(
+                            AppLocalizations.of(context).completedVideo,
+                            style: const TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.bold,
                             ),
                           ),
                           const SizedBox(height: 4),
                           Text(
-                            'Автоматты аударма аяқталды',
+                            AppLocalizations.of(context).automaticTranslationCompleted,
                             style: TextStyle(
                               color: Colors.grey[600],
                               fontSize: 14,
@@ -1522,56 +1776,221 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                 ),
                 const SizedBox(height: 20),
-                // Play Preview Button
-                SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton.icon(
-                    onPressed: () => _playFinalVideo(_finalVideoPath!),
-                    icon: const Icon(Icons.play_circle_outline, size: 28),
-                    label: const Text('Видеоны Қарау'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.primaryBlue,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 20),
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: () => _saveFinalVideo(_finalVideoPath!),
-                        icon: const Icon(Icons.download),
-                        label: const Text('Видеоны Сақтау'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.accentColor,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
+                
+                // Platform-specific action buttons
+                ...Platform.isMacOS
+                    ? [
+                        // macOS: Only show Finder button
+                        SizedBox(
+                          width: double.infinity,
+                          child: ElevatedButton.icon(
+                            onPressed: () => _openVideoInFinder(_finalVideoPath!),
+                            icon: const Icon(Icons.folder_open),
+                            label: Text(AppLocalizations.of(context).openInFinder),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.primaryBlue,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 20),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
                           ),
                         ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    ElevatedButton.icon(
-                      onPressed: () => _openVideoInFinder(_finalVideoPath!),
-                      icon: const Icon(Icons.folder_open),
-                      label: const Text('Finder-де Ашу'),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.grey[700],
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 24),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                      ]
+                    : (Platform.isIOS || Platform.isAndroid)
+                        ? [
+                            // iOS/Android: Only show gallery playback button
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                onPressed: () => _playVideoFromGallery(_finalVideoPath!),
+                                icon: const Icon(Icons.play_circle_outline, size: 28),
+                                label: const Text('Видеоны Қарау'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppTheme.primaryBlue,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 20),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ]
+                        : [],
+                
+                // Usage Statistics Card (for logged-in users)
+                Builder(
+                  builder: (context) {
+                    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+                    
+                    if (!authProvider.isLoggedIn) {
+                      return const SizedBox.shrink();
+                    }
+                    
+                    final stats = authProvider.getDailyUsageStats();
+                    final usedToday = stats['usedToday'] ?? 0.0;
+                    final remaining = stats['remaining'] ?? 0.0;
+                    
+                    return Column(
+                      children: [
+                        const SizedBox(height: 20),
+                        const Divider(),
+                        const SizedBox(height: 16),
+                        
+                        // Usage Stats Header
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.analytics_outlined,
+                              color: AppTheme.primaryBlue,
+                              size: 20,
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              l10n.translate('minutes_used_today'),
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ],
                         ),
-                      ),
-                    ),
-                  ],
+                        const SizedBox(height: 12),
+                        
+                        // Stats Row
+                        Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: AppTheme.primaryBlue.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(
+                              color: AppTheme.primaryBlue.withOpacity(0.2),
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceAround,
+                            children: [
+                              // Used Today
+                              Expanded(
+                                child: Column(
+                                  children: [
+                                    Icon(
+                                      Icons.timelapse,
+                                      color: AppTheme.warningColor,
+                                      size: 24,
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '${usedToday.toStringAsFixed(1)} min',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: AppTheme.warningColor,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      l10n.translate('minutes_used_today'),
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey[600],
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              
+                              Container(
+                                width: 1,
+                                height: 50,
+                                color: Colors.grey[300],
+                              ),
+                              
+                              // Remaining
+                              Expanded(
+                                child: Column(
+                                  children: [
+                                    Icon(
+                                      Icons.schedule,
+                                      color: AppTheme.successColor,
+                                      size: 24,
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '${remaining.toStringAsFixed(1)} min',
+                                      style: TextStyle(
+                                        fontSize: 16,
+                                        fontWeight: FontWeight.bold,
+                                        color: AppTheme.successColor,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      l10n.translate('minutes_remaining'),
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        color: Colors.grey[600],
+                                      ),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        
+                        // Continue Translation Button
+                        const SizedBox(height: 16),
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: () async {
+                              // Just show translation panel, don't cleanup anything
+                              final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+                              final project = projectProvider.currentProject;
+                              if (project != null) {
+                                // Update project to show translation step
+                                final updatedSteps = Map<ProjectStep, StepProgress>.from(project.steps);
+                                updatedSteps[ProjectStep.translation] = StepProgress(
+                                  step: ProjectStep.translation,
+                                  status: ProjectStatus.inProgress,
+                                  progress: 0.0,
+                                  startedAt: updatedSteps[ProjectStep.translation]?.startedAt ?? DateTime.now(),
+                                );
+
+                                await projectProvider.updateCurrentProject(
+                                  project.copyWith(
+                                    currentStep: ProjectStep.translation,
+                                    steps: updatedSteps,
+                                  ),
+                                );
+
+                                if (mounted) {
+                                  setState(() {
+                                    // UI will refresh and show translation panel
+                                  });
+                                }
+                              }
+                            },
+                            icon: const Icon(Icons.translate),
+                            label: Text(l10n.translate('continue_translation')),
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppTheme.primaryBlue,
+                              side: BorderSide(color: AppTheme.primaryBlue, width: 2),
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),
@@ -1770,8 +2189,70 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _runInlineTranslation(String targetLanguage) async {
     if (_result == null || _isTranslating) return;
 
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    
+    // Pre-translation limit check (only for logged-in users)
+    if (authProvider.isLoggedIn) {
+      final videoDurationMinutes = _result!.duration / 60.0;
+      
+      // VIP/Unlimited users bypass limit check
+      if (authProvider.userInfo?.hasUnlimitedAccess != true) {
+        // Refresh user minutes from backend to get most recent balance
+        await authProvider.refreshUserMinutes();
+        
+        // Debug: print balance information
+        debugPrint('=== AUTO TRANSLATION LIMIT CHECK ===');
+        debugPrint('Video duration: ${videoDurationMinutes.toStringAsFixed(2)} min');
+        debugPrint('Total remaining: ${authProvider.userInfo?.totalRemainingMinutes.toStringAsFixed(2)} min');
+        debugPrint('Free remaining: ${authProvider.userInfo?.remainingFreeMinutes?.toStringAsFixed(2)} min');
+        debugPrint('Paid remaining: ${authProvider.userInfo?.remainingPaidMinutes?.toStringAsFixed(2)} min');
+        debugPrint('Has enough? ${authProvider.hasEnoughMinutes(videoDurationMinutes)}');
+        
+        // Check if user has enough minutes for this video
+        if (!authProvider.hasEnoughMinutes(videoDurationMinutes)) {
+          // Show error and navigate to subscription
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(AppLocalizations.of(context).translate('insufficient_minutes')),
+                backgroundColor: AppTheme.errorColor,
+                action: SnackBarAction(
+                  label: AppLocalizations.of(context).translate('subscribe') ?? 'Subscribe',
+                  textColor: Colors.white,
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (context) => const SubscriptionScreen()),
+                    );
+                  },
+                ),
+                duration: const Duration(seconds: 5),
+              ),
+            );
+          }
+          return; // Stop translation process
+        }
+      }
+    }
+
     // If automatic mode is enabled, use orchestrator pipeline
-    if (_useAutomaticMode && _orchestrator != null && _selectedFile != null) {
+    if (_useAutomaticMode && _orchestrator != null) {
+      // Get video path from project (preferred) or fallback to selected file
+      final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+      final videoPath = projectProvider.currentProject?.videoPath ?? _selectedFile?.path;
+
+      if (videoPath == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Video file not found. Please upload the video again.'),
+              backgroundColor: AppTheme.errorColor,
+            ),
+          );
+        }
+        return;
+      }
+
       setState(() {
         _isTranslating = true;
         _automaticLogs.clear();
@@ -1779,7 +2260,7 @@ class _HomeScreenState extends State<HomeScreen> {
       });
 
       try {
-        final videoFile = File(_selectedFile!.path!);
+        final videoFile = File(videoPath);
         
         // Get TTS settings from SharedPreferences
         final prefs = await SharedPreferences.getInstance();
@@ -1803,6 +2284,7 @@ class _HomeScreenState extends State<HomeScreen> {
               });
             }
           },
+          username: authProvider.userInfo?.name ?? authProvider.userInfo?.email, // Pass username for balance check
         );
         
         
@@ -1838,33 +2320,17 @@ class _HomeScreenState extends State<HomeScreen> {
             await _autoSaveFinalVideo(result.finalVideoPath!);
           }
 
-          // Calculate total TTS audio duration for logging
+          // Calculate video duration for usage tracking (use video duration, not TTS audio duration)
           final authProvider = Provider.of<AuthProvider>(context, listen: false);
           final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
           
           if (authProvider.isLoggedIn) {
-            // Calculate total TTS duration from all segments
-            double totalTtsDuration = 0.0;
-            for (final segment in result.segments) {
-              if (segment.audioPath != null) {
-                try {
-                  final audioFile = File(segment.audioPath!);
-                  if (await audioFile.exists()) {
-                    // Get audio duration using VideoSplitterService helper
-                    final duration = await _videoSplitter.getAudioDuration(segment.audioPath!);
-                    totalTtsDuration += duration;
-                  }
-                } catch (e) {
-                  print('Warning: Could not get duration for ${segment.audioPath}: $e');
-                }
-              }
-            }
-
-            final ttsDurationMinutes = totalTtsDuration / 60.0;
+            // Use VIDEO duration from transcription result (already in seconds)
+            final videoDurationMinutes = _result!.duration / 60.0;
             
             if (mounted) {
               setState(() {
-                _automaticLogs.add('[INFO] Total TTS duration: ${ttsDurationMinutes.toStringAsFixed(2)} minutes');
+                _automaticLogs.add('[INFO] Video duration: ${videoDurationMinutes.toStringAsFixed(2)} minutes');
               });
             }
 
@@ -1878,31 +2344,19 @@ class _HomeScreenState extends State<HomeScreen> {
             }
             
             await _incrementCompletedTranslations();
+            
+            // Show post-translation dialog (only on success) with VIDEO duration
+            if (!hasFailures) {
+              await _showPostTranslationDialog(targetLanguage, videoDurationMinutes, _result!.filename);
+            }
           }
         }
       } catch (e) {
-        if (mounted) {
-          setState(() {
-            _automaticLogs.add('✗ Error: $e');
-            _isTranslating = false;
-          });
-          
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Automatic translation failed: $e'),
-              backgroundColor: AppTheme.errorColor,
-            ),
-          );
-        }
+        _handleOrchestratorError(e);
       }
       return; // Exit early, don't run manual translation
     }
 
-    // Manual translation mode (existing logic)
-    final authProvider = Provider.of<AuthProvider>(
-      context,
-      listen: false,
-    );
 
     // МАҢЫЗДЫ: Trial/guest қолданушылар үшін минуттарды тексермейміз
     // Олар trial attempts қолданады
@@ -2785,6 +3239,7 @@ class _HomeScreenState extends State<HomeScreen> {
             initialAudioPath: project.audioPath,
             currentFinalVideoPath: project.finalVideoPath,
             onComplete: (folderPath) => _onTtsComplete(folderPath),
+            onAutoMerge: () => _startAutoMergeAfterTTS(),
           ),
         );
       },
@@ -2843,6 +3298,128 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Start automatic merge after TTS is complete (manual mode)
+  Future<void> _startAutoMergeAfterTTS() async {
+    final projectProvider = Provider.of<ProjectProvider>(context, listen: false);
+    final authProvider = Provider.of<AuthProvider>(context, listen: false); // Added AuthProvider
+    final project = projectProvider.currentProject;
+    
+    if (project == null || _result == null || _selectedFile == null || _orchestrator == null) {
+      return;
+    }
+
+    // Verify TTS is complete and audio path exists
+    if (project.audioPath == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('TTS аяқталмаған. Алдымен аудионы оқытыңыз.'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+      return;
+    }
+
+    // Get video path from project (preferred) or fallback to selected file
+    final videoPath = project.videoPath;
+    if (videoPath.isEmpty) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Video file not found. Please upload the video again.'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+      return;
+    }
+
+    setState(() {
+      _isAutoMerging = true;
+      _isTranslating = true;
+      _automaticLogs.clear();
+      _automaticLogs.add('[INFO] Starting automatic merge after TTS...');
+    });
+
+    try {
+      final videoFile = File(videoPath);
+      
+      // Get TTS settings from SharedPreferences
+      final prefs = await SharedPreferences.getInstance();
+      final voice = prefs.getString('tts_voice') ?? 'alloy';
+      final speed = prefs.getDouble('video_speed') ?? 1.2;
+      
+      _automaticLogs.add('[INFO] Voice: $voice');
+      _automaticLogs.add('[INFO] Video speed: ${speed}x');
+      _automaticLogs.add('[INFO] Starting cut/merge pipeline...');
+      
+      final result = await _orchestrator!.processAutomatic(
+        videoFile: videoFile,
+        targetLanguage: project.targetLanguage!,
+        voice: voice,
+        videoSpeed: speed,
+        existingTranscriptionResult: _result,
+        onProgress: (progress) {
+          if (mounted) {
+            setState(() {
+              _automaticLogs.add('[${progress.stage.name}] ${progress.currentActivity}');
+            });
+          }
+        },
+        username: authProvider.userInfo?.name,
+      );
+      
+      if (mounted) {
+        // Check for failures
+        final failedSegments = result.segments
+           .where((s) => s.currentStage == SegmentStage.failed)
+            .toList();
+        
+        final hasFailures = failedSegments.isNotEmpty;
+        
+        setState(() {
+          if (hasFailures) {
+            _automaticLogs.add('❌ Pipeline completed with ${failedSegments.length} failed segment(s)');
+            for (final seg in failedSegments) {
+              _automaticLogs.add('   Seg ${seg.index + 1}: ${seg.errorMessage ?? "Unknown error"}');
+            }
+          } else {
+            _automaticLogs.add('✓ Automatic merge complete!');
+            _automaticLogs.add('Final video: ${result.finalVideoPath ?? "N/A"}');
+          }
+          
+          _finalVideoPath = result.finalVideoPath;
+          _isTranslating = false;
+          _isAutoMerging = false;
+        });
+
+        // Auto-save on success only
+        if (!hasFailures && result.finalVideoPath != null) {
+          await _autoSaveFinalVideo(result.finalVideoPath!);
+        }
+
+        // Update project completion
+        if (projectProvider.currentProject != null) {
+          await projectProvider.updateCurrentProject(
+            projectProvider.currentProject!.copyWith(
+              currentStep: ProjectStep.completed,
+            ),
+          );
+          await projectProvider.updateStepProgress(
+            step: ProjectStep.completed,
+            status: ProjectStatus.completed,
+            progress: 1.0,
+          );
+        }
+      }
+    } catch (e) {
+      _handleOrchestratorError(e);
+    }
+  }
+
+
+
   TranscriptionResult _buildTranslatedResultForTts(
     TranslationProject project,
     TranscriptionResult fallbackResult,
@@ -2894,11 +3471,10 @@ class _HomeScreenState extends State<HomeScreen> {
         await sourceFile.copy(result);
 
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('✅ Видео сәтті сақталды!'),
-              backgroundColor: AppTheme.successColor,
-            ),
+          SuccessAnimationOverlay.show(
+            context,
+            message: 'Видео сәтті сақталды!',
+            displayDuration: const Duration(seconds: 2),
           );
         }
       }
@@ -2954,13 +3530,29 @@ class _HomeScreenState extends State<HomeScreen> {
         
         // Show notification
         await notificationService.showVideoSavedNotification(
-          title: 'Video Saved Successfully',
-          body: 'Saved to Gallery',
+          title: '✅ Видео сақталды!',
+          body: 'Галереяға сәтті сақталды',
         );
+        
+        // Show animated success overlay
+        if (mounted) {
+          SuccessAnimationOverlay.show(
+            context,
+            message: '✅ Видео галереяға сәтті сақталды!',
+            displayDuration: const Duration(seconds: 3),
+          );
+        }
         
         print('✅ Video auto-saved to Gallery');
       }
-    } catch (e) {
+    
+    // Mark auto-save as completed
+    if (mounted) {
+      setState(() {
+        _autoSaveCompleted = true;
+      });
+    }
+  } catch (e) {
       print('❌ Auto-save failed: $e');
       // Don't show error to user since this is automatic
     }
@@ -2987,6 +3579,24 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  /// Play video from gallery (for iOS/Android after auto-save)
+  Future<void> _playVideoFromGallery(String filePath) async {
+    try {
+      // Open the gallery app - Gal.open() doesn't take parameters
+      // The video is already saved to gallery via auto-save
+      await Gal.open();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Галлерея ашу қатесі: $e'),
+            backgroundColor: AppTheme.errorColor,
+          ),
+        );
+      }
+    }
+  }
+
   /// Open video file in Finder (macOS)
   Future<void> _openVideoInFinder(String filePath) async {
     try {
@@ -3006,6 +3616,41 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         );
       }
+    }
+  }
+
+  // Handle Orchestrator errors uniformly
+  void _handleOrchestratorError(Object error) {
+    if (!mounted) return;
+    
+    setState(() {
+      _automaticLogs.add('✗ Error: $error');
+      _isTranslating = false;
+      _isAutoMerging = false;
+    });
+
+    if (error is InsufficientBalanceException) {
+       _showLimitExceededDialog(
+         title: AppLocalizations.of(context).translate('insufficient_balance') ?? 'Insufficient Balance',
+         message: AppLocalizations.of(context).translate('insufficient_balance_message') ?? 'You do not have enough minutes to process this video. Please top up your balance.',
+       );
+    } else if (error is VideoTooLongException) {
+       _showLimitExceededDialog(
+         title: AppLocalizations.of(context).translate('video_too_long') ?? 'Video Too Long',
+         message: 'Video duration (${error.videoDuration.toStringAsFixed(1)} min) exceeds limit (${error.maxAllowed.toStringAsFixed(1)} min).',
+       );
+    } else if (error is InsufficientStorageException) {
+       _showLimitExceededDialog(
+         title: 'Insufficient Storage',
+         message: 'Not enough storage space. Required: ${error.requiredMB} MB.',
+       );
+    } else {
+       ScaffoldMessenger.of(context).showSnackBar(
+         SnackBar(
+           content: Text('Processing failed: $error'),
+           backgroundColor: AppTheme.errorColor,
+         ),
+       );
     }
   }
 }

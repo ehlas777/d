@@ -5,10 +5,15 @@ import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:path/path.dart' as path;
+import 'video_splitter_service.dart';
 import '../models/transcription_options.dart';
 import '../models/transcription_result.dart';
 
 class TranscriptionService {
+  final VideoSplitterService _videoSplitterService;
+
+  TranscriptionService(this._videoSplitterService);
+
   Whisper? _whisper;
   bool _isInitialized = false;
   WhisperModel _currentModel = WhisperModel.none;
@@ -21,9 +26,9 @@ class TranscriptionService {
     'https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main',
   ];
 
-  static const Duration _downloadConnectTimeout = Duration(seconds: 20);
-  static const Duration _downloadChunkTimeout = Duration(seconds: 30);
-  static const Duration _transcribeTimeout = Duration(minutes: 30);
+  static const Duration _downloadConnectTimeout = Duration(seconds: 40);
+  static const Duration _downloadChunkTimeout = Duration(seconds: 80);
+  static const Duration _transcribeTimeout = Duration(hours: 2);
 
   /// Available Whisper models
   static const Map<String, WhisperModel> availableModels = {
@@ -192,42 +197,8 @@ class TranscriptionService {
   }
 
   /// Extract audio from video file using FFmpeg
-  Future<String> _extractAudio(File videoFile) async {
-    try {
-      final tempDir = await getTemporaryDirectory();
-      final audioPath = '${tempDir.path}/audio_${DateTime.now().millisecondsSinceEpoch}.wav';
+  /// Extract audio from video file using FFmpeg
 
-      // Extract audio as 16kHz mono WAV (required by Whisper)
-      print('Extracting audio with FFmpeg...');
-      print('Video path: ${videoFile.path}');
-      print('Output path: $audioPath');
-
-      // Build FFmpeg command using executeWithArguments for proper escaping
-      final arguments = [
-        '-i', videoFile.path,
-        '-ar', '16000',
-        '-ac', '1',
-        '-c:a', 'pcm_s16le',
-        '-y',
-        audioPath,
-      ];
-      print('FFmpeg arguments: $arguments');
-      final session = await FFmpegKit.executeWithArguments(arguments);
-      final returnCode = await session.getReturnCode();
-
-      if (ReturnCode.isSuccess(returnCode)) {
-        print('Audio extracted to: $audioPath');
-        return audioPath;
-      } else {
-        final output = await session.getOutput();
-        final failStackTrace = await session.getFailStackTrace();
-        final logs = await session.getAllLogsAsString();
-        throw Exception('FFmpeg extraction failed.\nReturn code: $returnCode\nOutput: $output\nLogs: $logs\nStack trace: $failStackTrace');
-      }
-    } catch (e) {
-      throw Exception('Error extracting audio: $e');
-    }
-  }
 
   /// Transcribe video file locally using Whisper
   Future<TranscriptionResult> transcribe({
@@ -242,7 +213,7 @@ class TranscriptionService {
     try {
       // Extract audio from video
       onProgress?.call(0.1);
-      final audioPath = await _extractAudio(videoFile);
+      final audioPath = await _videoSplitterService.extractAudio(videoFile);
       final audioFile = File(audioPath);
 
       if (!await audioFile.exists()) {

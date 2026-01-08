@@ -92,7 +92,7 @@ dependencies:
   
   # Automatic translation pipeline dependencies
   uuid: ^4.0.0
-  connectivity_plus: ^5.0.0
+  connectivity_plus: ^6.1.0
 
 dev_dependencies:
   flutter_test:

@@ -1,48 +1,47 @@
-import 'dart:convert';
 import 'dart:io';
-import 'package:http/http.dart' as http;
+import 'package:dio/dio.dart';
 import 'package:path_provider/path_provider.dart';
+import '../utils/dio_error_formatter.dart';
 
 class OpenAiTtsService {
   final String baseUrl;
   final String authToken;
-  final http.Client _client;
+  final Dio _dio;
 
   OpenAiTtsService({
     required this.baseUrl,
     required this.authToken,
-    http.Client? client,
-  }) : _client = client ?? http.Client();
-
-  Map<String, String> get _headers => {
-        HttpHeaders.contentTypeHeader: 'application/json',
-        HttpHeaders.authorizationHeader: 'Bearer $authToken',
-      };
+    Dio? dio, // For testing injection
+  }) : _dio = dio ?? Dio(
+    BaseOptions(
+      baseUrl: baseUrl,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer $authToken',
+      },
+    ),
+  );
 
   /// Дыбыстар тізімі
   Future<List<String>> getVoices() async {
-    final resp = await _client.get(
-      Uri.parse('$baseUrl/api/openaitts/voices'),
-      headers: _headers,
-    );
-    if (resp.statusCode != 200) {
-      throw Exception('Voices жүктеу қатесі: ${resp.statusCode}');
+    try {
+      final resp = await _dio.get('/api/openaitts/voices');
+      final data = resp.data as List;
+      return data.cast<String>();
+    } on DioException catch (e) {
+      throw Exception('Voices жүктеу қатесі: ${DioErrorFormatter.format(e)}');
     }
-    final data = jsonDecode(resp.body) as List;
-    return data.cast<String>();
   }
 
   /// Модельдер тізімі
   Future<List<String>> getModels() async {
-    final resp = await _client.get(
-      Uri.parse('$baseUrl/api/openaitts/models'),
-      headers: _headers,
-    );
-    if (resp.statusCode != 200) {
-      throw Exception('Модельдер жүктеу қатесі: ${resp.statusCode}');
+    try {
+      final resp = await _dio.get('/api/openaitts/models');
+      final data = resp.data as List;
+      return data.cast<String>();
+    } on DioException catch (e) {
+      throw Exception('Модельдер жүктеу қатесі: ${DioErrorFormatter.format(e)}');
     }
-    final data = jsonDecode(resp.body) as List;
-    return data.cast<String>();
   }
 
   /// Текстті аудиоға конвертациялау.
@@ -53,72 +52,55 @@ class OpenAiTtsService {
     String model = 'gpt-4o-mini-tts',
     double speed = 1.0,
   }) async {
-    final body = jsonEncode({
-      'text': text,
-      'voice': voice,
-      'model': model,
-      'speed': speed,
-    });
-
-    final resp = await _client.post(
-      Uri.parse('$baseUrl/api/openaitts/convert'),
-      headers: _headers,
-      body: body,
-    );
-
-    if (resp.statusCode != 200) {
-    // Extract request ID for tracking
-    final requestId = resp.headers['x-request-id'] ?? resp.headers['request-id'] ?? 'N/A';
-    
-    // Truncate response body for logging
-    final responseBody = resp.body.isEmpty 
-        ? 'Empty response' 
-        : (resp.body.length > 500 ? '${resp.body.substring(0, 500)}...' : resp.body);
-    
-    // Log comprehensive error details
-    print('❌ TTS API Error:');
-    print('   HTTP Status: ${resp.statusCode}');
-    print('   Request ID: $requestId');
-    print('   Response Body: $responseBody');
-    
-    // Try to parse error message safely
     try {
-      final err = jsonDecode(resp.body);
-      throw Exception('TTS қатесі: ${err['errorMessage'] ?? err['error'] ?? resp.statusCode}');
-    } catch (e) {
-      // If JSON parsing fails, show raw response
-      throw Exception('TTS қатесі: HTTP ${resp.statusCode} - $responseBody');
-    }
-  }
+      final body = {
+        'text': text,
+        'voice': voice,
+        'model': model,
+        'speed': speed,
+      };
 
-    // Parse successful response
-    try {
-      final data = jsonDecode(resp.body) as Map<String, dynamic>;
+      final resp = await _dio.post(
+        '/api/openaitts/convert',
+        data: body,
+      );
+
+      final data = resp.data as Map<String, dynamic>;
       final audioUrl = data['audioUrl'] as String?;
       if (audioUrl == null) {
         throw Exception('audioUrl бос қайтты');
       }
 
       // Аудионы жүктеу
-      final download = await _client.get(
-        Uri.parse('$baseUrl$audioUrl'),
-        headers: {HttpHeaders.authorizationHeader: 'Bearer $authToken'},
+      // Relative URL болса base URL қосу
+      final downloadUrl = audioUrl.startsWith('http') ? audioUrl : '$baseUrl$audioUrl';
+      
+      final downloadResp = await _dio.get(
+        downloadUrl,
+        options: Options(
+          responseType: ResponseType.bytes,
+        ),
       );
-      if (download.statusCode != 200) {
-        throw Exception('Аудио жүктеу қатесі: ${download.statusCode}');
-      }
 
       final dir = await getApplicationDocumentsDirectory();
       final fileName = data['fileName'] ?? 'tts_${DateTime.now().millisecondsSinceEpoch}.mp3';
       final file = File('${dir.path}/$fileName');
-      await file.writeAsBytes(download.bodyBytes, flush: true);
+      await file.writeAsBytes(downloadResp.data, flush: true);
       return file;
-    } on FormatException catch (e) {
-      throw Exception('JSON қатесі: ${e.message}. Response: ${resp.body.isEmpty ? 'Empty' : resp.body.substring(0, resp.body.length > 100 ? 100 : resp.body.length)}');
+
+    } on DioException catch (e) {
+      // Extensive logging for debugging
+      print('❌ TTS API Error via Dio:');
+      print('   HTTP Status: ${e.response?.statusCode}');
+      print('   Request ID: ${e.response?.headers.value('x-request-id') ?? 'N/A'}');
+      
+      final formattedError = DioErrorFormatter.format(e, defaultMessage: 'TTS қатесі');
+      throw Exception(formattedError);
     }
   }
 
   void dispose() {
-    _client.close();
+    _dio.close();
   }
 }
+

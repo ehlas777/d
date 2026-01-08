@@ -200,6 +200,7 @@ class TranslateSegmentsRequest {
   final String? sourceLanguage;
   final int durationSeconds;
   final String? videoFileName;
+  final String? idempotencyKey;  // CRITICAL: prevents duplicate balance deductions
 
   TranslateSegmentsRequest({
     required this.segments,
@@ -207,6 +208,7 @@ class TranslateSegmentsRequest {
     this.sourceLanguage,
     required this.durationSeconds,
     this.videoFileName,
+    this.idempotencyKey,
   });
 
   Map<String, dynamic> toJson() => {
@@ -215,6 +217,7 @@ class TranslateSegmentsRequest {
         if (sourceLanguage != null) 'sourceLanguage': sourceLanguage,
         'durationSeconds': durationSeconds,
         if (videoFileName != null) 'videoFileName': videoFileName,
+        if (idempotencyKey != null) 'idempotencyKey': idempotencyKey,
       };
 }
 

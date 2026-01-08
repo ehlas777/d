@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import '../config/app_theme.dart';
+import '../l10n/app_localizations.dart';
 
 /// Пайдаланушының қалған минуттарын көрсететін виджет
 class UserMinutesWidget extends StatelessWidget {
@@ -49,14 +50,14 @@ class UserMinutesWidget extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Шектеусіз қол жеткізу',
+                    AppLocalizations.of(context).featureUnlimited,
                     style: Theme.of(context).textTheme.titleMedium?.copyWith(
                           fontWeight: FontWeight.bold,
                         ),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    'Премиум абонемент',
+                    AppLocalizations.of(context).activeSubscription,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Colors.grey[600],
                         ),
@@ -102,7 +103,7 @@ class UserMinutesWidget extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '${remaining.toStringAsFixed(1)} мин қалды',
+                    '${remaining.toStringAsFixed(1)} ${AppLocalizations.of(context).minutesLeft}',
                     style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           fontWeight: FontWeight.bold,
                         ),
@@ -127,17 +128,39 @@ class UserMinutesWidget extends StatelessWidget {
   }
 
   Widget _buildDetailedCard(BuildContext context, AuthProvider authProvider) {
+    // Two-Bucket System Fields
+    final dailyRemaining = authProvider.dailyRemainingMinutes;
+    final extra = authProvider.extraMinutes;
+    final usedToday = authProvider.minutesUsedToday;
+    final totalAvailable = authProvider.totalAvailableMinutes;
+    
+    // Legacy Fields (fallback)
     final freeRemaining = authProvider.remainingFreeMinutes ?? 0;
     final freeLimit = authProvider.freeMinutesLimit ?? 0;
     final paidRemaining = authProvider.remainingPaidMinutes ?? 0;
     final paidLimit = authProvider.paidMinutesLimit ?? 0;
-    final totalRemaining = authProvider.totalRemainingMinutes;
-    final percentage = authProvider.remainingPercentage;
+    
+    // Check if we have new system data
+    final useNewSystem = dailyRemaining != null || extra != null;
+    
+    // Calculate display values
+    final displayTotal = useNewSystem ? totalAvailable : authProvider.totalRemainingMinutes;
+    final displayPercentage = authProvider.remainingPercentage;
 
     Color getColor() {
-      if (percentage >= 50) return AppTheme.successColor;
-      if (percentage >= 20) return AppTheme.warningColor;
+      if (displayPercentage >= 50) return AppTheme.successColor;
+      if (displayPercentage >= 20) return AppTheme.warningColor;
       return AppTheme.errorColor;
+    }
+
+    // Helper to format local reset time
+    String getResetTimeText() {
+       final now = DateTime.now();
+       final utcMidnight = DateTime.utc(now.year, now.month, now.day + 1); // Next 00:00 UTC
+       final localReset = utcMidnight.toLocal();
+       final hour = localReset.hour.toString().padLeft(2, '0');
+       final minute = localReset.minute.toString().padLeft(2, '0');
+       return AppLocalizations.of(context).dailyLimitResets.replaceFirst('{0}', '$hour:$minute');
     }
 
     return Card(
@@ -160,14 +183,14 @@ class UserMinutesWidget extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Қалған минуттар',
+                        AppLocalizations.of(context).totalAvailable,
                         style: Theme.of(context).textTheme.titleMedium?.copyWith(
                               fontWeight: FontWeight.bold,
                             ),
                       ),
                       const SizedBox(height: 4),
                       Text(
-                        '${totalRemaining.toStringAsFixed(1)} мин',
+                        '${displayTotal.toStringAsFixed(1)} ${AppLocalizations.of(context).minutesLeft}',
                         style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                               color: getColor(),
                               fontWeight: FontWeight.bold,
@@ -181,7 +204,7 @@ class UserMinutesWidget extends StatelessWidget {
                   onPressed: () {
                     context.read<AuthProvider>().refreshUserMinutes();
                   },
-                  tooltip: 'Жаңарту',
+                  tooltip: 'Refresh',
                 ),
               ],
             ),
@@ -189,25 +212,74 @@ class UserMinutesWidget extends StatelessWidget {
             ClipRRect(
               borderRadius: BorderRadius.circular(8),
               child: LinearProgressIndicator(
-                value: percentage / 100,
+                value: displayPercentage / 100,
                 backgroundColor: Colors.grey[200],
                 valueColor: AlwaysStoppedAnimation<Color>(getColor()),
                 minHeight: 10,
               ),
             ),
             const SizedBox(height: 4),
-            Text(
-              '${percentage.toStringAsFixed(0)}% қалды',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.grey[600],
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  '${displayPercentage.toStringAsFixed(0)}${AppLocalizations.of(context).percentRemaining}',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Colors.grey[600],
+                      ),
+                ),
+                if (useNewSystem)
+                   Text(
+                    getResetTimeText(),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Colors.grey[500],
+                      fontSize: 10,
+                    ),
                   ),
+              ],
             ),
-            if (freeLimit > 0 || paidLimit > 0) ...[
-              const Divider(height: 24),
+            const Divider(height: 24),
+            
+            if (useNewSystem) ...[
+                if (dailyRemaining != null)
+                _buildMinuteRow(
+                  context,
+                  AppLocalizations.of(context).dailyLimit,
+                  dailyRemaining,
+                  authProvider.totalMinutesLimit, // Assuming this maps to daily limit
+                  Icons.calendar_today,
+                  Colors.blue,
+                ),
+              if (dailyRemaining != null && extra != null && extra > 0)
+                const SizedBox(height: 8),
+                
+              // Extra Bucket
+              if (extra != null && extra > 0)
+                _buildMinuteRow(
+                  context,
+                  AppLocalizations.of(context).extraBalance,
+                  extra,
+                  extra, // No limit really, so 100%
+                  Icons.star,
+                  Colors.amber,
+                ),
+                
+              if (usedToday != null) ...[
+                 const SizedBox(height: 8),
+                 Text(
+                   AppLocalizations.of(context).usedToday.replaceFirst('{0}', usedToday.toStringAsFixed(1)),
+                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                     color: Colors.grey[600],
+                     fontStyle: FontStyle.italic,
+                   ),
+                 ),
+              ]
+            ] else ...[
+              // Legacy Fallback
               if (freeLimit > 0) ...[
                 _buildMinuteRow(
                   context,
-                  'Тегін минуттар',
+                  AppLocalizations.of(context).freeMinutes,
                   freeRemaining,
                   freeLimit,
                   Icons.free_breakfast,
@@ -218,7 +290,7 @@ class UserMinutesWidget extends StatelessWidget {
               if (paidLimit > 0) ...[
                 _buildMinuteRow(
                   context,
-                  'Ақылы минуттар',
+                  AppLocalizations.of(context).paidMinutes,
                   paidRemaining,
                   paidLimit,
                   Icons.paid,
@@ -226,7 +298,8 @@ class UserMinutesWidget extends StatelessWidget {
                 ),
               ],
             ],
-            if (percentage < 20) ...[
+
+            if (displayPercentage < 20) ...[
               const SizedBox(height: 12),
               Container(
                 padding: const EdgeInsets.all(12),
@@ -241,7 +314,7 @@ class UserMinutesWidget extends StatelessWidget {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'Минуттар таусылып барады. Абонементті жаңартыңыз.',
+                        AppLocalizations.of(context).lowMinutesWarning,
                         style: TextStyle(
                           color: Colors.red[700],
                           fontSize: 12,
@@ -329,7 +402,7 @@ class InsufficientMinutesDialog extends StatelessWidget {
         children: [
           Icon(Icons.warning, color: Colors.orange),
           const SizedBox(width: 8),
-          const Text('Минуттар жеткіліксіз'),
+          Text(AppLocalizations.of(context).insufficientMinutes),
         ],
       ),
       content: Column(
@@ -337,7 +410,9 @@ class InsufficientMinutesDialog extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Бұл видеоны аудару үшін ${required.toStringAsFixed(1)} минут қажет, бірақ сізде ${available.toStringAsFixed(1)} минут ғана қалды.',
+            AppLocalizations.of(context).minutesRequiredMessage
+                .replaceFirst('{0}', required.toStringAsFixed(1))
+                .replaceFirst('{1}', available.toStringAsFixed(1)),
           ),
           const SizedBox(height: 12),
           Container(
@@ -353,7 +428,8 @@ class InsufficientMinutesDialog extends StatelessWidget {
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
-                    'Тағы ${deficit.toStringAsFixed(1)} минут қажет',
+                    AppLocalizations.of(context).moreMinutesNeeded
+                        .replaceFirst('{0}', deficit.toStringAsFixed(1)),
                     style: TextStyle(
                       color: Colors.orange[700],
                       fontWeight: FontWeight.bold,
@@ -368,14 +444,14 @@ class InsufficientMinutesDialog extends StatelessWidget {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Жабу'),
+          child: Text(AppLocalizations.of(context).close),
         ),
         ElevatedButton(
           onPressed: () {
             Navigator.of(context).pop();
             // TODO: Абонемент бетіне өту
           },
-          child: const Text('Абонемент алу'),
+          child: Text(AppLocalizations.of(context).getSubscription),
         ),
       ],
     );

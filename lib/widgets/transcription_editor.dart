@@ -855,12 +855,12 @@ class _TranscriptionEditorState extends State<TranscriptionEditor> {
           : const Icon(Icons.translate, size: 18),
       label: isBusy
           ? Text(
-              _isTranslating ? 'Аударылуда…' : l10n.translate('saving'),
+              _isTranslating ? l10n.translatingStatus : l10n.translate('saving'),
               style: const TextStyle(fontWeight: FontWeight.w700),
             )
-          : const Text(
-              'Аудар',
-              style: TextStyle(fontWeight: FontWeight.w700),
+          : Text(
+              l10n.translateAction,
+              style: const TextStyle(fontWeight: FontWeight.w700),
             ),
       style: ElevatedButton.styleFrom(
         backgroundColor: AppTheme.accentColor,
@@ -887,10 +887,10 @@ class _TranscriptionEditorState extends State<TranscriptionEditor> {
           children: [
             const Icon(Icons.auto_awesome, size: 16, color: AppTheme.accentColor),
             const SizedBox(width: 8),
-            const Expanded(
+            Expanded(
               child: Text(
-                'Автоматты',
-                style: TextStyle(
+                AppLocalizations.of(context).automaticMode,
+                style: const TextStyle(
                   fontWeight: FontWeight.bold,
                   fontSize: 13,
                 ),
@@ -898,11 +898,11 @@ class _TranscriptionEditorState extends State<TranscriptionEditor> {
             ),
           ],
         ),
-        subtitle: const Padding(
-          padding: EdgeInsets.only(top: 2),
+        subtitle: Padding(
+          padding: const EdgeInsets.only(top: 2),
           child: Text(
-            'TTS + Видео (5X жылдам)',
-            style: TextStyle(fontSize: 11),
+            AppLocalizations.of(context).ttsAndVideo,
+            style: const TextStyle(fontSize: 11),
           ),
         ),
         value: _isAutomatic,

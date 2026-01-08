@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import '../models/translation_models.dart';
+import '../utils/dio_error_formatter.dart';
 import 'api_client.dart';
 
 class BackendTranslationService {
@@ -9,10 +10,10 @@ class BackendTranslationService {
 
   BackendTranslationService(this.apiClient);
 
-  static const Duration _defaultTimeout = Duration(minutes: 5);
-  static const Duration _mediumTimeout = Duration(minutes: 15);
-  static const Duration _longTimeout = Duration(minutes: 20);
-  static const Duration _maxTimeout = Duration(minutes: 30);
+  static const Duration _defaultTimeout = Duration(minutes: 45);
+  static const Duration _mediumTimeout = Duration(minutes: 45);
+  static const Duration _longTimeout = Duration(minutes: 60);
+  static const Duration _maxTimeout = Duration(minutes: 60);
   static const int _segmentChunkSize = 500;
   static const int _maxCharsPerRequest = 20000;
 
@@ -163,91 +164,7 @@ class BackendTranslationService {
     return 1;
   }
 
-  String _truncate(String value, {int max = 600}) {
-    if (value.length <= max) return value;
-    return '${value.substring(0, max)}…';
-  }
 
-  String? _extractBackendMessage(dynamic data) {
-    if (data == null) return null;
-
-    if (data is String) {
-      final trimmed = data.trim();
-      return trimmed.isEmpty ? null : _truncate(trimmed);
-    }
-
-    if (data is Map) {
-      final errorMessage = data['errorMessage'];
-      if (errorMessage is String && errorMessage.trim().isNotEmpty) {
-        return _truncate(errorMessage.trim());
-      }
-
-      final message = data['message'];
-      if (message is String && message.trim().isNotEmpty) {
-        return _truncate(message.trim());
-      }
-
-      final error = data['error'];
-      if (error is String && error.trim().isNotEmpty) {
-        return _truncate(error.trim());
-      }
-
-      final title = data['title'];
-      final detail = data['detail'];
-      if (title is String && title.trim().isNotEmpty) {
-        if (detail is String && detail.trim().isNotEmpty) {
-          return _truncate('${title.trim()}: ${detail.trim()}');
-        }
-        return _truncate(title.trim());
-      }
-
-      final errors = data['errors'];
-      if (errors is Map) {
-        final parts = <String>[];
-        for (final entry in errors.entries) {
-          final key = entry.key?.toString() ?? 'error';
-          final value = entry.value;
-          if (value is List && value.isNotEmpty) {
-            parts.add('$key: ${value.first}');
-          } else if (value != null) {
-            parts.add('$key: $value');
-          }
-        }
-        if (parts.isNotEmpty) {
-          return _truncate(parts.join(' | '));
-        }
-      }
-    }
-
-    return _truncate(data.toString());
-  }
-
-  String _formatDioError(DioException error) {
-    final status = error.response?.statusCode;
-    final backendMessage = _extractBackendMessage(error.response?.data);
-    if (backendMessage != null) {
-      return status != null ? '$backendMessage (HTTP $status)' : backendMessage;
-    }
-
-    switch (error.type) {
-      case DioExceptionType.connectionTimeout:
-      case DioExceptionType.sendTimeout:
-      case DioExceptionType.receiveTimeout:
-        return 'Request timeout. Please try again.';
-      case DioExceptionType.connectionError:
-        return 'Network error. Check your internet connection.';
-      case DioExceptionType.badCertificate:
-        return 'Network security error (bad certificate).';
-      case DioExceptionType.cancel:
-        return 'Request cancelled.';
-      case DioExceptionType.badResponse:
-      case DioExceptionType.unknown:
-        break;
-    }
-
-    if (status != null) return 'Request failed (HTTP $status).';
-    return 'Request failed. Please try again.';
-  }
 
   // Get pricing information
   Future<TranslationPricing> getPricing() async {
@@ -349,7 +266,8 @@ class BackendTranslationService {
     } catch (e) {
       debugPrint('=== Translation Error ===');
       debugPrint('Error: $e');
-      final friendlyMessage = e is DioException ? _formatDioError(e) : e.toString();
+      debugPrint('Error: $e');
+      final friendlyMessage = e is DioException ? DioErrorFormatter.format(e) : e.toString();
       return TranslationJobResult(
         success: false,
         message: 'Translation failed: $friendlyMessage',
@@ -411,6 +329,7 @@ class BackendTranslationService {
     String? sourceLanguage,
     required int durationSeconds,
     String? videoFileName,
+    String? idempotencyKey,  // CRITICAL: prevents duplicate balance deductions
   }) async {
     if (segments.isEmpty) {
       return TranslateSegmentsResult(
@@ -434,6 +353,7 @@ class BackendTranslationService {
         sourceLanguage: sourceLanguage,
         durationSeconds: durationSeconds,
         videoFileName: videoFileName,
+        idempotencyKey: idempotencyKey,
         maxCharsPerChunk: shouldChunkBySize ? _maxCharsPerRequest : null,
       );
     }
@@ -444,6 +364,7 @@ class BackendTranslationService {
       sourceLanguage: sourceLanguage,
       durationSeconds: durationSeconds,
       videoFileName: videoFileName,
+      idempotencyKey: idempotencyKey,
     );
 
     if (!_shouldFallbackSegmentsResult(primary, segments.length)) {
@@ -464,6 +385,7 @@ class BackendTranslationService {
       sourceLanguage: sourceLanguage,
       durationSeconds: durationSeconds,
       videoFileName: videoFileName,
+      idempotencyKey: idempotencyKey,
       maxCharsPerChunk: totalChars > _maxCharsPerRequest ? _maxCharsPerRequest : null,
     );
   }
@@ -474,6 +396,7 @@ class BackendTranslationService {
     String? sourceLanguage,
     required int durationSeconds,
     String? videoFileName,
+    String? idempotencyKey,  // CRITICAL: prevents duplicate balance deductions
   }) async {
     try {
       final safeSourceLanguage = _coerceLanguageCode(sourceLanguage);
@@ -501,6 +424,7 @@ class BackendTranslationService {
         sourceLanguage: safeSourceLanguage,
         durationSeconds: safeDurationSeconds,
         videoFileName: videoFileName,
+        idempotencyKey: idempotencyKey,  // Pass to backend
       );
 
       final timeout = _requestTimeout(segments.length);
@@ -573,9 +497,9 @@ class BackendTranslationService {
                           e.response?.headers.value('request-id') ?? 'N/A';
         debugPrint('HTTP status: ${e.response?.statusCode}');
         debugPrint('Request ID: $requestId');
-        debugPrint('Response data: ${_extractBackendMessage(e.response?.data) ?? '(empty)'}');
+        debugPrint('Response data: ${e.response?.data ?? '(empty)'}');
       }
-      final friendlyMessage = e is DioException ? _formatDioError(e) : e.toString();
+      final friendlyMessage = e is DioException ? DioErrorFormatter.format(e) : e.toString();
       return TranslateSegmentsResult(
         success: false,
         translatedSegments: [],
@@ -590,6 +514,7 @@ class BackendTranslationService {
     String? sourceLanguage,
     required int durationSeconds,
     String? videoFileName,
+    String? idempotencyKey,  // CRITICAL: prevents duplicate balance deductions
     int? maxCharsPerChunk,
   }) async {
     final safeSourceLanguage = _coerceLanguageCode(sourceLanguage);
@@ -638,6 +563,7 @@ class BackendTranslationService {
         sourceLanguage: safeSourceLanguage,
         durationSeconds: durationSeconds,
         videoFileName: videoFileName,
+        idempotencyKey: idempotencyKey != null ? '${idempotencyKey}_chunk_$chunkIndex' : null,
       );
       final result = _coerceResultIfComplete(rawResult, chunk.length);
 
@@ -773,7 +699,7 @@ class BackendTranslationService {
           throw Exception(result.errorMessage ?? 'Translation failed');
         }
       } catch (e) {
-        final friendlyMessage = e is DioException ? _formatDioError(e) : e.toString();
+        final friendlyMessage = e is DioException ? DioErrorFormatter.format(e) : e.toString();
         debugPrint('Segment $i failed: $friendlyMessage');
 
         segmentStates[i] = state.copyWith(
@@ -850,7 +776,7 @@ class BackendTranslationService {
         throw Exception(result.errorMessage ?? 'Translation failed');
       }
     } catch (e) {
-      final friendlyMessage = e is DioException ? _formatDioError(e) : e.toString();
+      final friendlyMessage = e is DioException ? DioErrorFormatter.format(e) : e.toString();
       debugPrint('Retry failed for segment ${segmentState.index}: $friendlyMessage');
 
       return segmentState.copyWith(

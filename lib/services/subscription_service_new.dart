@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'api_client.dart';
+import '../utils/dio_error_formatter.dart';
 import '../models/localized_product.dart';
 
 class SubscriptionServiceNew {
@@ -24,14 +25,7 @@ class SubscriptionServiceNew {
       final products = response.data['products'] as List;
       return products.map((json) => LocalizedProduct.fromJson(json)).toList();
     } on DioException catch (e) {
-      throw _handleError(e);
+      throw Exception(DioErrorFormatter.format(e));
     }
-  }
-
-  String _handleError(DioException e) {
-    if (e.response != null) {
-      return e.response?.data['message'] ?? 'Unknown error';
-    }
-    return e.message ?? 'Network error';
   }
 }

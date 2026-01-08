@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../config/app_theme.dart';
 import '../models/auto_translation_progress.dart';
 import '../models/auto_translation_state.dart';
+import '../l10n/app_localizations.dart';
 
 /// Real-time progress monitor for automatic translation
 /// Shows console-style logs of current operations and per-segment status
@@ -60,9 +61,9 @@ class AutoTranslationProgressPanel extends StatelessWidget {
                 // Blinking indicator
                 _buildBlinkingDot(),
                 const SizedBox(width: 8),
-                const Text(
-                  'AUTOMATIC TRANSLATION MONITOR',
-                  style: TextStyle(
+                Text(
+                  AppLocalizations.of(context).automaticTranslationMonitor,
+                  style: const TextStyle(
                     color: Color(0xFF4EC9B0), // Cyan
                     fontFamily: 'Courier',
                     fontSize: 12,
@@ -72,7 +73,7 @@ class AutoTranslationProgressPanel extends StatelessWidget {
                 ),
                 const Spacer(),
                 Text(
-                  '${logs.length} ops',
+                  '${logs.length} ${AppLocalizations.of(context).opsCount}',
                   style: const TextStyle(
                     color: Color(0xFF858585),
                     fontFamily: 'Courier',
@@ -96,9 +97,9 @@ class AutoTranslationProgressPanel extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Text(
-                    'SEGMENTS STATUS',
-                    style: TextStyle(
+                  Text(
+                    AppLocalizations.of(context).segmentsStatus,
+                    style: const TextStyle(
                       color: Color(0xFF858585),
                       fontFamily: 'Courier',
                       fontSize: 10,

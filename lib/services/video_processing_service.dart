@@ -2,6 +2,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:ffmpeg_kit_flutter_new/ffmpeg_kit.dart';
+import 'package:ffmpeg_kit_flutter_new/ffprobe_kit.dart';
 import 'package:ffmpeg_kit_flutter_new/return_code.dart';
 import 'package:video_player/video_player.dart';
 
@@ -25,28 +26,45 @@ class VideoProcessingResult {
 /// - Probe duration
 /// - Trim to subscription tier limit if exceeded
 class VideoProcessingService {
-  /// Get video duration using Flutter's native VideoPlayerController
-  /// This is faster than FFprobe and doesn't require spawning external processes
+  /// Get video duration using Flutter's native VideoPlayerController (fast)
+  /// with fallback to FFprobe (robust)
   Future<double> getVideoDuration(String inputPath) async {
-    final controller = VideoPlayerController.file(File(inputPath));
+    // 1. Try VideoPlayerController (Fastest)
     try {
+      final controller = VideoPlayerController.file(File(inputPath));
       await controller.initialize();
       final duration = controller.value.duration.inMilliseconds / 1000.0;
+      await controller.dispose();
       return duration;
     } catch (e) {
-      throw Exception('Видео ұзақтығын оқу сәтсіз: $e');
-    } finally {
-      await controller.dispose();
+      print('VideoPlayerController failed: $e. Falling back to FFprobe...');
     }
+
+    // 2. Fallback to FFprobe (Robust)
+    try {
+      final session = await FFprobeKit.getMediaInformation(inputPath);
+      final info = await session.getMediaInformation();
+      final durationStr = info?.getDuration();
+      
+      if (durationStr != null) {
+        return double.parse(durationStr);
+      }
+    } catch (e) {
+      print('FFprobe failed: $e');
+    }
+
+    throw Exception('Failed to determine video duration');
   }
 
   /// Trim video to [maxDurationSeconds] if it exceeds the limit
+  /// [knownDuration] - optional duration if already calculated (saves probing)
   Future<VideoProcessingResult> prepareForTranslation({
     required String inputPath,
     double maxDurationSeconds = 60.0,
     String watermarkText = 'PolyDub',
+    double? knownDuration,
   }) async {
-    final duration = await getVideoDuration(inputPath);
+    final duration = knownDuration ?? await getVideoDuration(inputPath);
     final shouldTrim = duration > maxDurationSeconds + 0.01;
     
     // If video is within limit, return it unchanged

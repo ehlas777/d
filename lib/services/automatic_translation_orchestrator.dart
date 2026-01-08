@@ -16,7 +16,9 @@ import 'auto_translation_storage.dart';
 import 'throttled_queue.dart';
 import 'network_resilience_handler.dart';
 import 'storage_manager.dart';
-import 'background_notification_manager.dart';
+import '../services/background_notification_manager.dart';
+import '../exceptions/balance_exceptions.dart';
+import '../services/auth_service.dart';
 
 /// Main orchestrator for automatic translation pipeline
 /// Coordinates all services and manages the complete workflow
@@ -30,6 +32,7 @@ class AutomaticTranslationOrchestrator {
   final ThrottledQueue apiQueue;
   final NetworkResilienceHandler networkHandler;
   final StorageManager storageManager;
+  final AuthService authService; // Added dependency
 
   // State
   AutoTranslationState? _currentState;
@@ -58,6 +61,7 @@ class AutomaticTranslationOrchestrator {
     required this.apiQueue,
     required this.networkHandler,
     required this.storageManager,
+    required this.authService,
   });
 
   /// Progress stream for UI updates
@@ -77,6 +81,7 @@ class AutomaticTranslationOrchestrator {
     bool resumeFromSaved = false,
     String? projectId,
     Function(AutoTranslationProgress)? onProgress,
+    String? username, // Added username parameter
   }) async {
     try {
       _isCancelled = false;
@@ -101,7 +106,7 @@ class AutomaticTranslationOrchestrator {
       }
 
       // 2. Pre-flight checks
-      await _preflightChecks(videoFile);
+      await _preflightChecks(videoFile, username: username);
 
       // 3. Start auto-save
       _startAutoSave();
@@ -217,7 +222,7 @@ class AutomaticTranslationOrchestrator {
     await _saveState();
   }
 
-  Future<void> _preflightChecks(File videoFile) async {
+  Future<void> _preflightChecks(File videoFile, {String? username}) async {
     // 1. Check video file exists
     if (!await videoFile.exists()) {
       throw Exception('Video file not found: ${videoFile.path}');
@@ -236,6 +241,44 @@ class AutomaticTranslationOrchestrator {
 
     if (!await storageManager.hasEnoughSpace(requiredMB)) {
       throw InsufficientStorageException(requiredMB: requiredMB);
+    }
+
+    // 4. Check Balance & Duration Limits (Two-Bucket System)
+    try {
+      final durationSeconds = await videoSplitter.getVideoDuration(videoFile.path);
+      final durationMinutes = durationSeconds / 60.0;
+      
+      print('🔍 Pre-flight Balance Check:');
+      print('   Video Duration: $durationSeconds sec (${durationMinutes.toStringAsFixed(2)} min)');
+
+      // Fetch fresh user data (authoritative source)
+      final user = await authService.getUserMinutesInfo(searchQuery: username);
+      
+      if (user == null) {
+        throw Exception('Failed to retrieve user balance information');
+      }
+      
+      // Check if video is too long (using new field maxVideoDuration)
+      if (user.maxVideoDuration != null && durationMinutes > user.maxVideoDuration!) {
+        throw VideoTooLongException(
+          videoDuration: durationMinutes,
+          maxAllowed: user.maxVideoDuration!,
+        );
+      }
+
+      // Check if user has enough minutes (daily + extra)
+      if (!user.hasEnoughMinutes(durationMinutes)) {
+         throw InsufficientBalanceException(
+           required: durationMinutes,
+           available: user.totalAvailable, // Two-bucket total
+         );
+      }
+      
+      print('✅ Balance check passed: Available ${user.totalAvailable.toStringAsFixed(2)} min');
+
+    } catch (e) {
+      print('❌ Pre-flight check failed: $e');
+      rethrow;
     }
   }
 
@@ -336,13 +379,21 @@ class AutomaticTranslationOrchestrator {
     await _saveState();
 
     // Initialize queues and store references for cleanup
-    _translationQueue = ThrottledQueue(maxConcurrent: 5);
+    // MOBILE OPTIMIZATION: FFmpeg operations (cut/merge) use heavy RAM on mobile
+    // Translation and TTS are API calls - safe to keep parallel
+    final isMobile = Platform.isIOS || Platform.isAndroid;
+    
+    _translationQueue = ThrottledQueue(maxConcurrent: 5); // API call - safe on mobile
     _ttsQueue = ThrottledQueue(
-      maxConcurrent: 1, // Sequential: one at a time
-      delayBetweenRequests: const Duration(seconds: 1), // Wait 1s between TTS requests
+      maxConcurrent: 1, // Sequential for rate limiting (all platforms)
+      delayBetweenRequests: const Duration(seconds: 1),
     );
-    _cuttingQueue = ThrottledQueue(maxConcurrent: 2); // CPU bound
-    _mergingQueue = ThrottledQueue(maxConcurrent: 2); // Heavy CPU
+    _cuttingQueue = ThrottledQueue(maxConcurrent: isMobile ? 1 : 2); // FFmpeg - limit on mobile
+    _mergingQueue = ThrottledQueue(maxConcurrent: isMobile ? 1 : 2); // FFmpeg - limit on mobile
+    
+    if (isMobile) {
+      print('📱 Mobile: Sequential FFmpeg operations to reduce RAM usage');
+    }
 
     final segments = _currentState!.segments;
     int completedTasks = 0; // Rough progress tracker
@@ -413,13 +464,17 @@ class AutomaticTranslationOrchestrator {
                 text: segment.originalText,
               );
 
-              final result = await networkHandler.retryWithBackoff(
-                operation: () => translationService.translateSegments(
-                  segments: [translationSegment],
-                  targetLanguage: _currentState!.targetLanguage,
-                  sourceLanguage: _currentState!.sourceLanguage,
-                  durationSeconds: 10,
-                ),
+              // GENERATE IDEMPOTENCY KEY (or reuse if retrying same segment op)
+              // Ideally store in segment state, but simpler: deterministic seed from project + segment + retry
+              // Better: Generate unique key once per segment translation attempt and persist
+              final idempotencyKey = const Uuid().v5(Uuid.NAMESPACE_URL, 'project_${_currentState!.projectId}_seg_${segment.index}_trans');
+              
+              final result = await translationService.translateSegments(
+                segments: [translationSegment],
+                targetLanguage: _currentState!.targetLanguage,
+                sourceLanguage: _currentState!.sourceLanguage,
+                durationSeconds: 10,
+                idempotencyKey: idempotencyKey, // CRITICAL: Pass key for deduplication
               );
 
               if (result.success && result.translatedSegments.isNotEmpty) {
@@ -458,12 +513,10 @@ class AutomaticTranslationOrchestrator {
 
                final segment = getSegment();
 
-               final audioFile = await networkHandler.retryWithBackoff(
-                 operation: () => ttsService.convert(
-                   text: segment.translatedText!,
-                   voice: _currentState!.voice ?? 'alloy',
-                 ),
-               );
+                final audioFile = await ttsService.convert(
+                  text: segment.translatedText!,
+                  voice: _currentState!.voice ?? 'alloy',
+                );
 
                // Unique naming to avoid collision
                final targetPath = '${audioDir.path}/seg_${segmentIndex}_tts.mp3';
@@ -686,56 +739,44 @@ class AutomaticTranslationOrchestrator {
     int maxRetries = 3,
     Duration initialDelay = const Duration(seconds: 3),
   }) async {
-    int attempt = 0;
-    final List<Duration> retryDelays = [
-      const Duration(seconds: 3),   // First retry: 3s
-      const Duration(seconds: 8),   // Second retry: 8s
-      const Duration(seconds: 20),  // Third retry: 20s
-    ];
-    
-    String? lastErrorType;
-    String? lastErrorDetails;
-    
-    while (attempt < maxRetries) {
-      try {
-        await operation();
-        // Success - only log if recovered from previous failure
-        if (attempt > 0) {
-          print('✅ Seg ${segmentIndex + 1} $operationName: Recovered after $attempt retry(ies)');
-        }
-        return;
-      } catch (e) {
-        attempt++;
-        
-        // Analyze error type and root cause
+    await networkHandler.retryWithBackoff(
+      maxRetries: maxRetries,
+      customDelays: [
+        const Duration(seconds: 3),
+        const Duration(seconds: 8),
+        const Duration(seconds: 20),
+      ],
+      checkNetwork: false, // Already checked or handled by operation
+      shouldRetry: (e) {
+        // Analyze error type and root cause for logging
         final errorStr = e.toString();
         final errorType = _categorizeError(errorStr);
         final rootCause = _extractRootCause(errorStr, operationName);
-        
-        lastErrorType = errorType;
-        lastErrorDetails = rootCause;
-        
-        if (attempt >= maxRetries) {
-          // Final failure - comprehensive error report
-          print('❌ Seg ${segmentIndex + 1} $operationName FAILED after $maxRetries attempts');
-          print('   └─ Type: $errorType | Cause: $rootCause');
-          if (errorType == 'SESSION') {
-            print('   └─ Hint: Backend session expired. User may need to re-login.');
-          } else if (errorType == 'NETWORK') {
-            print('   └─ Hint: Check internet connection or API endpoint availability.');
-          } else if (errorType == 'FFMPEG') {
-            print('   └─ Hint: Video/audio file may be corrupted or format incompatible.');
-          }
-          rethrow;
+
+        // Concise log for retry
+        print('⚠️ Seg ${segmentIndex + 1} $operationName [$errorType] failed ($rootCause). Retrying...');
+        return true; 
+      },
+      operation: () async {
+        try {
+          await operation();
+        } catch (e) {
+           // Rethrow so retryHandler catches it
+           rethrow;
         }
+      },
+    ).catchError((e) {
+       // Final failure handler after max retries
+       // We re-analyze to print the final detailed error message
+        final errorStr = e.toString();
+        final errorType = _categorizeError(errorStr);
+        final rootCause = _extractRootCause(errorStr, operationName);
+
+        print('❌ Seg ${segmentIndex + 1} $operationName FAILED after retries');
+        print('   └─ Type: $errorType | Cause: $rootCause');
         
-        // Retry attempt - concise single-line log
-        final delay = retryDelays[attempt - 1];
-        print('⚠️ Seg ${segmentIndex + 1} $operationName [$errorType] retry $attempt/$maxRetries in ${delay.inSeconds}s');
-        
-        await Future.delayed(delay);
-      }
-    }
+        throw e; // Propagate to _processSingleSegmentFlow catch block
+    });
   }
   
   /// Categorize error type for better diagnostics
@@ -913,8 +954,8 @@ class AutomaticTranslationOrchestrator {
     final appDir = await getApplicationDocumentsDirectory();
     final finalPath = '${appDir.path}/final_${_currentState!.projectId}.mp4';
 
-    // Use user's video speed preference (default to 1.0 if not set)
-    final speedMultiplier = _currentState!.videoSpeed ?? 1.0;
+    // Use user's video speed preference (default to 1.2x if not set)
+    final speedMultiplier = _currentState!.videoSpeed ?? 1.2;
     
     await videoSplitter.concatenateAndSpeedUp(
       mergedVideoDir: _currentState!.mergedVideoDir!,
@@ -1044,10 +1085,47 @@ class AutomaticTranslationOrchestrator {
 
   /// Dispose resources
   void dispose() {
-    _isDisposed = true; // Set flag first to prevent further updates
+    // Set flag first to prevent further updates
+    _isDisposed = true;
+    _isCancelled = true; // Cancel all pending work
+    
+    // Stop auto-save timer
     _stopAutoSave();
-    _disableWakeLock();
-    _notificationManager.cancelAll();
-    _progressController.close();
+    
+    // Clear all queues to prevent pending operations
+    _translationQueue?.clear();
+    _ttsQueue?.clear();
+    _cuttingQueue?.clear();
+    _mergingQueue?.clear();
+    
+    // Disable wake lock safely
+    try {
+      if (_wakeLockEnabled) {
+        WakelockPlus.disable().catchError((e) {
+          print('❌ Wake lock cleanup error: $e');
+        });
+        _wakeLockEnabled = false;
+      }
+    } catch (e) {
+      print('❌ Wake lock cleanup error: $e');
+    }
+    
+    // Cancel notifications
+    try {
+      _notificationManager.cancelAll();
+    } catch (e) {
+      print('❌ Notification cleanup error: $e');
+    }
+    
+    // Close stream controller safely
+    try {
+      if (!_progressController.isClosed) {
+        _progressController.close();
+      }
+    } catch (e) {
+      print('❌ Stream controller cleanup error: $e');
+    }
+    
+    print('🧹 Orchestrator disposed successfully');
   }
 }

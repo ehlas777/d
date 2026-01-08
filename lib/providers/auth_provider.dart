@@ -9,6 +9,7 @@ class AuthProvider extends ChangeNotifier {
   String? _userId;
   bool _isLoggedIn = false;
   User? _userInfo;
+  bool _lastRefreshFailed = false; // Track if last balance refresh failed
 
   // We should access ApiClient via AuthService if needed, or pass it too.
   // AuthService has apiClient.
@@ -16,6 +17,9 @@ class AuthProvider extends ChangeNotifier {
   
   // Getter for apiClient if needed directly (though ideally we use authService)
   ApiClient get apiClient => _authService.apiClient;
+
+  // Expose AuthService for dependency injection
+  AuthService get authService => _authService;
 
   AuthProvider(this._authService) {
     _checkAuthStatus();
@@ -26,6 +30,7 @@ class AuthProvider extends ChangeNotifier {
   String? get email => _email;
   String? get userId => _userId;
   User? get userInfo => _userInfo;
+  bool get lastRefreshFailed => _lastRefreshFailed;
 
   // Минуттар ақпаратын алу
   double? get freeMinutesLimit => _userInfo?.freeMinutesLimit;
@@ -36,6 +41,11 @@ class AuthProvider extends ChangeNotifier {
   double get totalMinutesLimit => _userInfo?.totalMinutesLimit ?? 0;
   double get remainingPercentage => _userInfo?.remainingPercentage ?? 0;
   bool? get hasUnlimitedAccess => _userInfo?.hasUnlimitedAccess;
+  
+  // Two-Bucket System Getters
+  double? get dailyRemainingMinutes => _userInfo?.dailyRemainingMinutes;
+  double? get extraMinutes => _userInfo?.extraMinutes;
+  double get totalAvailableMinutes => _userInfo?.totalAvailable ?? 0.0;
 
   Future<void> _checkAuthStatus() async {
     print('🔍 Checking auth status...');
@@ -55,6 +65,7 @@ class AuthProvider extends ChangeNotifier {
         
         // МАҢЫЗДЫ: User minutes info жүктеу (maxVideoDuration үшін)
         await refreshUserMinutes();
+
         print('✅ User authenticated and info loaded');
         print('   - username: $_username');
         print('   - maxVideoDuration: ${_userInfo?.maxVideoDuration}');
@@ -181,7 +192,7 @@ class AuthProvider extends ChangeNotifier {
   }
 
   // Пайдаланушы минуттар ақпаратын жаңарту
-  Future<void> refreshUserMinutes() async {
+  Future<bool> refreshUserMinutes() async {
     final searchQuery = (_email?.trim().isNotEmpty == true)
         ? _email!.trim()
         : (_username?.trim().isNotEmpty == true
@@ -189,17 +200,33 @@ class AuthProvider extends ChangeNotifier {
             : _userId?.trim());
 
     if (searchQuery == null || searchQuery.isEmpty) {
-      return;
+      print('⚠️ refreshUserMinutes failed: No search query available');
+      print('   - email: $_email, username: $_username, userId: $_userId');
+      _lastRefreshFailed = true;
+      notifyListeners();
+      return false; // FAILED
     }
 
     try {
       final userInfo = await _authService.getUserMinutesInfo(searchQuery: searchQuery);
       if (userInfo != null) {
         _userInfo = userInfo;
+        _lastRefreshFailed = false; // Success
+        print('✅ refreshUserMinutes success');
+        print('   - Remaining: ${userInfo.getRemainingDailyMinutes()}');
         notifyListeners();
+        return true; // SUCCESS
+      } else {
+        print('⚠️ refreshUserMinutes failed: Backend returned null');
+        _lastRefreshFailed = true;
+        notifyListeners();
+        return false; // FAILED
       }
     } catch (e) {
-      // Қате болса, ескі деректерді сақтаймыз
+      print('⚠️ refreshUserMinutes exception: $e');
+      _lastRefreshFailed = true;
+      notifyListeners();
+      return false; // ERROR
     }
   }
 
@@ -214,5 +241,27 @@ class AuthProvider extends ChangeNotifier {
   // Жеткілікті минуттар бар ма?
   bool hasEnoughMinutes(double requiredMinutes) {
     return _userInfo?.hasEnoughMinutes(requiredMinutes) ?? false;
+  }
+  
+  // Get daily usage statistics (from backend values only)
+  Map<String, double> getDailyUsageStats() {
+    if (_userInfo == null) {
+      return {
+        'usedToday': 0.0,
+        'remaining': 0.0,
+        'totalLimit': 0.0,
+      };
+    }
+
+    // Use backend values directly (backend returns usedMinutes explicitly)
+    final usedToday = _userInfo!.usedMinutes ?? 0.0;  // From backend ✅
+    final remaining = _userInfo!.getRemainingDailyMinutes();
+    final totalLimit = _userInfo!.totalLimit ?? 0.0;  // Daily limit from backend ✅
+
+    return {
+      'usedToday': usedToday,      // BACKEND usedMinutes field
+      'remaining': remaining,       // BACKEND balanceMinutes
+      'totalLimit': totalLimit,     // BACKEND totalLimit field
+    };
   }
 }

@@ -212,6 +212,19 @@ class AppLocalizations {
       'final_video_speed': 'Соңғы видео жылдамдығы',
       'open': 'Ашу',
       
+      // Post-Translation Dialog
+      'post_translation_dialog_title': 'Аударма аяқталды',
+      'post_translation_dialog_message': 'Бұл видео {0} тіліне аударылды. Басқа тілге аударуды жалғастырғыңыз келе ме?',
+      'clean': 'Тазалау',
+      'continue_translation': 'Жалғастыру',
+      'minutes_used_today': 'Бүгін пайдаланылған',
+      'minutes_remaining': 'Қалған минуттар',
+      'total_tts_duration': 'Жалпы TTS ұзақтығы',
+      'total_video_duration': 'Видео ұзақтығы',
+      'insufficient_minutes_message': '{0} минут керек, бірақ жеткілікті баланс жоқ. Жазылымды жаңартыңыз.',
+      'insufficient_balance': 'Баланс жеткіліксіз',
+      'insufficient_balance_message': 'Бұл видеоны өңдеу үшін жеткілікті минуттар жоқ. Балансты толықтырыңыз.',
+      
       // Subscription
       'subscription_plans': 'Жазылым жоспарлары',
       'choose_your_plan': 'Жоспарыңызды таңдаңыз',
@@ -268,6 +281,32 @@ class AppLocalizations {
       'delete': 'Өшіру',
       'delete_account_success': 'Аккаунт сәтті өшірілді',
       'delete_account_error': 'Аккаунтты өшіру қатесі',
+
+      // User Minutes Widget
+      'daily_limit_resets': 'Күнделікті лимит 00:00 UTC жаңартылады ({0} жергілікті)',
+      'total_available': 'Жалпы қолжетімді',
+      'minutes_left': 'мин қалды',
+      'percent_remaining': '% қалды',
+      'daily_limit': 'Күнделікті лимит',
+      'extra_balance': 'Қосымша баланс',
+      'used_today': 'Бүгін қолданылды: {0} мин',
+      'free_minutes': 'Тегін минуттар',
+      'paid_minutes': 'Ақылы минуттар',
+      'low_minutes_warning': 'Минуттар аяқталуға жақын. Жоспарды жаңартыңыз.',
+
+      // Auto Translation Monitor
+      'automatic_translation_monitor': 'АВТОМАТТЫ АУДАРМА МОНИТОРЫ',
+      'segments_status': 'СЕГМЕНТТЕР КҮЙІ',
+      'ops_count': 'операция',
+      
+      // Home Screen & Transcription Editor
+      'completed_video': 'Аяқталған Видео',
+      'automatic_translation_completed': 'Автоматты аударма аяқталды',
+      'open_in_finder': 'Finder-де Ашу',
+      'automatic_mode': 'Автоматты',
+      'tts_and_video': 'TTS + Видео (5X жылдам)',
+      'translating_status': 'Аударылуда…',
+      'translate_action': 'Аудар',
     },
     'ru_RU': {
       // Navigation & Actions
@@ -443,6 +482,19 @@ class AppLocalizations {
       'final_video_speed': 'Скорость финального видео',
       'open': 'Открыть',
       
+      // Post-Translation Dialog
+      'post_translation_dialog_title': 'Перевод завершён',
+      'post_translation_dialog_message': 'Это видео переведено на {0}. Хотите продолжить перевод на другой язык?',
+      'clean': 'Очистить',
+      'continue_translation': 'Продолжить',
+      'minutes_used_today': 'Использовано сегодня',
+      'minutes_remaining': 'Осталось минут',
+      'total_tts_duration': 'Общая длительность TTS',
+      'total_video_duration': 'Длительность видео',
+      'insufficient_minutes_message': 'Требуется {0} минут, но недостаточно баланса. Пожалуйста, обновите подписку.',
+      'insufficient_balance': 'Недостаточно баланса',
+      'insufficient_balance_message': 'У вас недостаточно минут для обработки этого видео. Пожалуйста, пополните баланс.',
+      
       // Subscription
       'subscription_plans': 'Планы подписки',
       'choose_your_plan': 'Выберите свой план',
@@ -499,6 +551,32 @@ class AppLocalizations {
       'delete': 'Удалить',
       'delete_account_success': 'Аккаунт успешно удален',
       'delete_account_error': 'Ошибка удаления аккаунта',
+
+      // User Minutes Widget
+      'daily_limit_resets': 'Лимит обновляется в 00:00 UTC ({0} местное)',
+      'total_available': 'Всего доступно',
+      'minutes_left': 'мин осталось',
+      'percent_remaining': '% осталось',
+      'daily_limit': 'Дневной лимит',
+      'extra_balance': 'Доп. баланс',
+      'used_today': 'Использовано сегодня: {0} мин',
+      'free_minutes': 'Бесплатные минуты',
+      'paid_minutes': 'Платные минуты',
+      'low_minutes_warning': 'Заканчиваются минуты. Пожалуйста, обновите план.',
+
+      // Auto Translation Monitor
+      'automatic_translation_monitor': 'МОНИТОР АВТОМАТИЧЕСКОГО ПЕРЕВОДА',
+      'segments_status': 'СТАТУС СЕГМЕНТОВ',
+      'ops_count': 'операций',
+
+      // Home Screen & Transcription Editor
+      'completed_video': 'Готовое видео',
+      'automatic_translation_completed': 'Автоматический перевод завершен',
+      'open_in_finder': 'Открыть в Finder',
+      'automatic_mode': 'Автоматически',
+      'tts_and_video': 'TTS + Видео (5X быстрее)',
+      'translating_status': 'Переводится…',
+      'translate_action': 'Перевести',
     },
     'en_US': {
       // Navigation & Actions
@@ -674,6 +752,19 @@ class AppLocalizations {
       'final_video_speed': 'Final Video Speed',
       'open': 'Open',
       
+      // Post-Translation Dialog
+      'post_translation_dialog_title': 'Translation Complete',
+      'post_translation_dialog_message': 'This video was translated to {0}. Would you like to continue translating to another language?',
+      'clean': 'Clean',
+      'continue_translation': 'Continue',
+      'minutes_used_today': 'Used Today',
+      'minutes_remaining': 'Remaining Minutes',
+      'total_tts_duration': 'Total TTS Duration',
+      'total_video_duration': 'Video Duration',
+      'insufficient_minutes_message': 'This video requires {0} minutes, but you don\'t have enough balance. Please upgrade your subscription.',
+      'insufficient_balance': 'Insufficient Balance',
+      'insufficient_balance_message': 'You do not have enough minutes to process this video. Please top up your balance.',
+      
       // Subscription
       'subscription_plans': 'Subscription Plans',
       'choose_your_plan': 'Choose Your Plan',
@@ -730,6 +821,32 @@ class AppLocalizations {
       'delete': 'Delete',
       'delete_account_success': 'Account successfully deleted',
       'delete_account_error': 'Error deleting account',
+
+      // User Minutes Widget
+      'daily_limit_resets': 'Daily limit resets at 00:00 UTC ({0} local)',
+      'total_available': 'Total Available',
+      'minutes_left': 'min left',
+      'percent_remaining': '% remaining',
+      'daily_limit': 'Daily Limit',
+      'extra_balance': 'Extra Balance',
+      'used_today': 'Used today: {0} min',
+      'free_minutes': 'Free Minutes',
+      'paid_minutes': 'Paid Minutes',
+      'low_minutes_warning': 'Running low on minutes. Please upgrade your plan.',
+
+      // Auto Translation Monitor
+      'automatic_translation_monitor': 'AUTOMATIC TRANSLATION MONITOR',
+      'segments_status': 'SEGMENTS STATUS',
+      'ops_count': 'ops',
+
+      // Home Screen & Transcription Editor
+      'completed_video': 'Completed Video',
+      'automatic_translation_completed': 'Automatic translation completed',
+      'open_in_finder': 'Open in Finder',
+      'automatic_mode': 'Automatic',
+      'tts_and_video': 'TTS + Video (5X faster)',
+      'translating_status': 'Translating…',
+      'translate_action': 'Translate',
     },
     'tr_TR': {
       // Navigation & Actions
@@ -759,6 +876,33 @@ class AppLocalizations {
       'accurate': 'Hassas',
       'output_format': 'Çıktı Formatı',
       'timestamps': 'Zaman Damgaları',
+      
+       // User Minutes Widget
+      'daily_limit_resets': 'Günlük limit 00:00 UTC\'de sıfırlanır ({0} yerel)',
+      'total_available': 'Toplam Kullanılabilir',
+      'minutes_left': 'dk kaldı',
+      'percent_remaining': '% kaldı',
+      'daily_limit': 'Günlük Limit',
+      'extra_balance': 'Ekstra Bakiye',
+      'used_today': 'Pügün kullanılan: {0} dk',
+      'free_minutes': 'Ücretsiz Dakikalar',
+      'paid_minutes': 'Ücretli Dakikalar',
+      'low_minutes_warning': 'Dakikalarınız azalıyor. Lütfen planınızı yükseltin.',
+
+      // Auto Translation Monitor
+      'automatic_translation_monitor': 'OTOMATİK ÇEVİRİ İZLEYİCİSİ',
+      'segments_status': 'SEGMENT DURUMU',
+      'ops_count': 'işlem',
+
+      // Home Screen & Transcription Editor
+      'completed_video': 'Tamamlanan Video',
+      'automatic_translation_completed': 'Otomatik çeviri tamamlandı',
+      'open_in_finder': 'Finder\'da Aç',
+      'automatic_mode': 'Otomatik',
+      'tts_and_video': 'TTS + Video (5X daha hızlı)',
+      'translating_status': 'Çevriliyor…',
+      'translate_action': 'Çevir',
+
       'speaker_diarization': 'Konuşmacı Ayrımı',
       'profanity_filter': 'Küfür Filtresi',
       'punctuation': 'Noktalama',
@@ -880,7 +1024,16 @@ class AppLocalizations {
       'save_to_photos': 'Fotoğraflar\'a kaydet',
       'final_video_speed': 'Son video hızı',
       'open': 'Aç',
-
+      
+      // Post-Translation Dialog
+      'post_translation_dialog_title': 'Çeviri tamamlandı',
+      'post_translation_dialog_message': 'Bu video {0} diline çevrildi. Başka bir dile çevirmeye devam etmek ister misiniz?',
+      'clean': 'Temizle',
+      'continue_translation': 'Devam Et',
+      'minutes_used_today': 'Bugün kullanılan',
+      'minutes_remaining': 'Kalan dakikalar',
+      'total_tts_duration': 'Toplam TTS süresi',
+      
       // Account Deletion
       'delete_account': 'Hesabı Sil',
       'delete_account_confirmation_title': 'Hesabı Sil',
@@ -1037,7 +1190,16 @@ class AppLocalizations {
       'save_to_photos': 'Rasmlarga saqlash',
       'final_video_speed': 'Yakuniy video tezligi',
       'open': 'Ochish',
-
+      
+      // Post-Translation Dialog
+      'post_translation_dialog_title': 'Tarjima tugallandi',
+      'post_translation_dialog_message': 'Bu video {0} tiliga tarjima qilindi. Boshqa tilga tarjima qilishni davom ettirasizmi?',
+      'clean': 'Tozalash',
+      'continue_translation': 'Davom etish',
+      'minutes_used_today': 'Bugun ishlatilgan',
+      'minutes_remaining': 'Qolgan daqiqalar',
+      'total_tts_duration': 'Umumiy TTS davomiyligi',
+      
       // Account Deletion
       'delete_account': 'Hisobni o\'chirish',
       'delete_account_confirmation_title': 'Hisobni o\'chirish',
@@ -1045,6 +1207,32 @@ class AppLocalizations {
       'delete': 'O\'chirish',
       'delete_account_success': 'Hisob muvaffaqiyatli o\'chirildi',
       'delete_account_error': 'Hisobni o\'chirish xatosi',
+
+      // User Minutes Widget
+      'daily_limit_resets': 'Kunlik limit 00:00 UTC da yangilanadi ({0} mahalliy)',
+      'total_available': 'Jami mavjud',
+      'minutes_left': 'daqiqa qoldi',
+      'percent_remaining': '% qoldi',
+      'daily_limit': 'Kunlik limit',
+      'extra_balance': 'Qo\'shimcha balans',
+      'used_today': 'Bugun ishlatildi: {0} daqiqa',
+      'free_minutes': 'Bepul daqiqalar',
+      'paid_minutes': 'Pullik daqiqalar',
+      'low_minutes_warning': 'Daqiqalar tugamoqda. Iltimos, rejangizni yangilang.',
+
+      // Auto Translation Monitor
+      'automatic_translation_monitor': 'AVTOMATIK TARJIMA MONITORI',
+      'segments_status': 'SEGMENTLAR HOLATI',
+      'ops_count': 'amallar',
+
+      // Home Screen & Transcription Editor
+      'completed_video': 'Tugallangan Video',
+      'automatic_translation_completed': 'Avtomatik tarjima tugallandi',
+      'open_in_finder': 'Finder-da Ochish',
+      'automatic_mode': 'Avtomatik',
+      'tts_and_video': 'TTS + Video (5X tezroq)',
+      'translating_status': 'Tarjima qilinmoqda…',
+      'translate_action': 'Tarjima qilish',
     },
 
     'zh_CN': {
@@ -1166,7 +1354,16 @@ class AppLocalizations {
       'save_to_photos': '保存到相册',
       'final_video_speed': '最终视频速度',
       'open': '打开',
-
+      
+      // Post-Translation Dialog
+      'post_translation_dialog_title': '翻译完成',
+      'post_translation_dialog_message': '此视频已翻译成{0}。您想继续翻译成其他语言吗？',
+      'clean': '清理',
+      'continue_translation': '继续',
+      'minutes_used_today': '今日已用',
+      'minutes_remaining': '剩余分钟',
+      'total_tts_duration': '总 TTS 时长',
+      
       // Account Deletion
       'delete_account': '删除账户',
       'delete_account_confirmation_title': '删除账户',
@@ -1174,6 +1371,32 @@ class AppLocalizations {
       'delete': '删除',
       'delete_account_success': '账户已成功删除',
       'delete_account_error': '删除账户错误',
+
+      // User Minutes Widget
+      'daily_limit_resets': 'Daily limit resets at 00:00 UTC ({0} local)',
+      'total_available': 'Total Available',
+      'minutes_left': 'min left',
+      'percent_remaining': '% remaining',
+      'daily_limit': 'Daily Limit',
+      'extra_balance': 'Extra Balance',
+      'used_today': 'Used today: {0} min',
+      'free_minutes': 'Free Minutes',
+      'paid_minutes': 'Paid Minutes',
+      'low_minutes_warning': 'Running low on minutes. Please upgrade your plan.',
+
+      // Auto Translation Monitor
+      'automatic_translation_monitor': 'AUTOMATIC TRANSLATION MONITOR',
+      'segments_status': 'SEGMENTS STATUS',
+      'ops_count': 'ops',
+
+      // Home Screen & Transcription Editor
+      'completed_video': 'Completed Video',
+      'automatic_translation_completed': 'Automatic translation completed',
+      'open_in_finder': 'Open in Finder',
+      'automatic_mode': 'Automatic',
+      'tts_and_video': 'TTS + Video (5X faster)',
+      'translating_status': 'Translating…',
+      'translate_action': 'Translate',
     },
 
     'ar_SA': {
@@ -1318,7 +1541,16 @@ class AppLocalizations {
       'save_to_photos': 'حفظ في الصور',
       'final_video_speed': 'سرعة الفيديو النهائية',
       'open': 'فتح',
-
+      
+      // Post-Translation Dialog
+      'post_translation_dialog_title': 'اكتملت الترجمة',
+      'post_translation_dialog_message': 'تمت ترجمة هذا الفيديو إلى {0}. هل تريد المتابعة بترجمة إلى لغة أخرى؟',
+      'clean': 'تنظيف',
+      'continue_translation': 'متابعة',
+      'minutes_used_today': 'استخدمت اليوم',
+      'minutes_remaining': 'الدقائق المتبقية',
+      'total_tts_duration': 'مدة TTS الإجمالية',
+      
       // Account Deletion
       'delete_account': 'حذف الحساب',
       'delete_account_confirmation_title': 'حذف الحساب',
@@ -1326,6 +1558,32 @@ class AppLocalizations {
       'delete': 'حذف',
       'delete_account_success': 'تم حذف الحساب بنجاح',
       'delete_account_error': 'خطأ في حذف الحساب',
+
+      // User Minutes Widget
+      'daily_limit_resets': 'Daily limit resets at 00:00 UTC ({0} local)',
+      'total_available': 'Total Available',
+      'minutes_left': 'min left',
+      'percent_remaining': '% remaining',
+      'daily_limit': 'Daily Limit',
+      'extra_balance': 'Extra Balance',
+      'used_today': 'Used today: {0} min',
+      'free_minutes': 'Free Minutes',
+      'paid_minutes': 'Paid Minutes',
+      'low_minutes_warning': 'Running low on minutes. Please upgrade your plan.',
+
+      // Auto Translation Monitor
+      'automatic_translation_monitor': 'AUTOMATIC TRANSLATION MONITOR',
+      'segments_status': 'SEGMENTS STATUS',
+      'ops_count': 'ops',
+
+      // Home Screen & Transcription Editor
+      'completed_video': 'Completed Video',
+      'automatic_translation_completed': 'Automatic translation completed',
+      'open_in_finder': 'Open in Finder',
+      'automatic_mode': 'Automatic',
+      'tts_and_video': 'TTS + Video (5X faster)',
+      'translating_status': 'Translating…',
+      'translate_action': 'Translate',
     },
 
   };
@@ -1372,6 +1630,39 @@ class AppLocalizations {
   String get deleteAccountSuccess => translate('delete_account_success');
   String get deleteAccountError => translate('delete_account_error');
   String get cancel => translate('cancel');
+
+  // User Minutes Widget
+  String get dailyLimitResets => translate('daily_limit_resets');
+  String get totalAvailable => translate('total_available');
+  String get minutesLeft => translate('minutes_left');
+  String get percentRemaining => translate('percent_remaining');
+  String get dailyLimit => translate('daily_limit');
+  String get extraBalance => translate('extra_balance');
+  String get usedToday => translate('used_today');
+  String get freeMinutes => translate('free_minutes');
+  String get paidMinutes => translate('paid_minutes');
+  String get lowMinutesWarning => translate('low_minutes_warning');
+
+  // Auto Translation Monitor
+  String get automaticTranslationMonitor => translate('automatic_translation_monitor');
+  String get segmentsStatus => translate('segments_status');
+  String get opsCount => translate('ops_count');
+
+  // Insufficient Minutes Dialog
+  String get insufficientMinutes => translate('insufficient_minutes');
+  String get minutesRequiredMessage => translate('minutes_required_message');
+  String get moreMinutesNeeded => translate('more_minutes_needed');
+  String get close => translate('close');
+  String get getSubscription => translate('get_subscription');
+
+  // Home Screen & Transcription Editor
+  String get completedVideo => translate('completed_video');
+  String get automaticTranslationCompleted => translate('automatic_translation_completed');
+  String get openInFinder => translate('open_in_finder');
+  String get automaticMode => translate('automatic_mode');
+  String get ttsAndVideo => translate('tts_and_video');
+  String get translatingStatus => translate('translating_status');
+  String get translateAction => translate('translate_action');
 }
 
 class _AppLocalizationsDelegate

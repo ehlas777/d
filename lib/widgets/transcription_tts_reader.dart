@@ -12,6 +12,7 @@ class TranscriptionTtsReader extends StatefulWidget {
   final String baseUrl;
   final String authToken;
   final void Function(String folderPath)? onComplete;
+  final void Function()? onAutoMerge; // Trigger automatic merge
   final String? initialAudioPath;
   final String? currentFinalVideoPath;
 
@@ -21,6 +22,7 @@ class TranscriptionTtsReader extends StatefulWidget {
     required this.baseUrl,
     required this.authToken,
     this.onComplete,
+    this.onAutoMerge,
     this.initialAudioPath,
     this.currentFinalVideoPath,
   });
@@ -775,14 +777,16 @@ class _TranscriptionTtsReaderState extends State<TranscriptionTtsReader> {
                 Expanded(
                   child: ElevatedButton.icon(
                     onPressed: () {
-                      if (widget.onComplete != null && _outputFolder != null) {
+                      if (widget.onAutoMerge != null) {
+                        widget.onAutoMerge!();
+                      } else if (widget.onComplete != null && _outputFolder != null) {
                         widget.onComplete!(_outputFolder!);
                       }
                     },
-                    icon: const Icon(Icons.arrow_forward),
-                    label: const Text('Келесі қадам'),
+                    icon: const Icon(Icons.auto_awesome),
+                    label: const Text('Автоматты Біріктіру'),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: AppTheme.successColor,
+                      backgroundColor: AppTheme.primaryBlue,
                       foregroundColor: Colors.white,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                     ),

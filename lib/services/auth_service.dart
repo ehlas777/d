@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:dio/dio.dart';
+import '../utils/dio_error_formatter.dart';
 import '../models/auth_models.dart';
 import 'api_client.dart';
 
@@ -40,7 +41,7 @@ class AuthService {
       print('Response: ${e.response?.data}');
       print('Status code: ${e.response?.statusCode}');
       
-      final message = _formatDioError(e, defaultMessage: 'Login failed');
+      final message = DioErrorFormatter.format(e, defaultMessage: 'Login failed');
       print('Formatted error: $message');
       
       return AuthResponse(
@@ -77,7 +78,7 @@ class AuthService {
 
       return authResponse;
     } on DioException catch (e) {
-      final message = _formatDioError(e, defaultMessage: 'Registration failed');
+      final message = DioErrorFormatter.format(e, defaultMessage: 'Registration failed');
       return AuthResponse(
         success: false,
         message: message,
@@ -119,34 +120,57 @@ class AuthService {
 
   // Пайдаланушы минуттар ақпаратын алу
   Future<User?> getUserMinutesInfo({
-    required String searchQuery,
+    String? searchQuery,
   }) async {
-    final normalizedQuery = searchQuery.trim();
-
-    if (normalizedQuery.isEmpty) {
-      print('getUserMinutesInfo skipped: empty search query');
+    if (!await isAuthenticated()) {
+      print('getUserMinutesInfo skipped: not authenticated');
       return null;
     }
 
-    if (!await isAuthenticated()) {
-      print('getUserMinutesInfo skipped: not authenticated');
+    String? queryToUse = searchQuery?.trim();
+
+    if (queryToUse == null || queryToUse.isEmpty) {
+      // If no query provided, fetch current user profile first
+      try {
+        final currentUser = await getCurrentUser();
+        if (currentUser?.success == true) {
+          queryToUse = currentUser?.username ?? currentUser?.email;
+        }
+      } catch (e) {
+        print('Error fetching current user for minutes lookup: $e');
+      }
+    }
+
+    if (queryToUse == null || queryToUse.isEmpty) {
+      print('getUserMinutesInfo skipped: could not determine user to lookup');
       return null;
     }
 
     try {
       final response = await apiClient.get(
         '/api/TranslationStats/user-balance',
-        queryParameters: {'search': normalizedQuery},
+        queryParameters: {'search': queryToUse},
       );
 
       final data = _normalizeResponseData(response.data);
+      
+      // DEBUG: Backend response-ін толық көру
+      print('🔍 Backend user-balance response:');
+      print('   Raw data: $data');
       if (data is Map<String, dynamic>) {
+        print('   hasUnlimitedAccess: ${data['hasUnlimitedAccess']}');
+        print('   subscriptionStatus: ${data['subscriptionStatus']}');
+        print('   balanceMinutes: ${data['balanceMinutes']}');
+        print('   usedMinutes: ${data['usedMinutes']}');  // ⚠️ CRITICAL: Check if backend returns this
+        print('   totalLimit: ${data['totalLimit']}');
+        print('   dailyRemainingMinutes: ${data['dailyRemainingMinutes']}');
+        print('   extraMinutes: ${data['extraMinutes']}');
         return User.fromJson(data);
       }
 
       throw Exception('Unexpected minutes response type: ${data.runtimeType}');
     } on DioException catch (e) {
-      final message = _formatDioError(e, defaultMessage: 'Failed to load minutes');
+      final message = DioErrorFormatter.format(e, defaultMessage: 'Failed to load minutes');
       print('Error getting user minutes info: $message');
 
       // Try legacy endpoint as a fallback (older backend builds)
@@ -181,71 +205,7 @@ class AuthService {
     }
   }
 
-  String _formatDioError(
-    DioException e, {
-    required String defaultMessage,
-  }) {
-    if (e.type == DioExceptionType.connectionTimeout ||
-        e.type == DioExceptionType.receiveTimeout) {
-      return 'Connection timeout. Is the server running?';
-    }
 
-    if (e.type == DioExceptionType.connectionError) {
-      return 'Cannot connect to server at ${apiClient.dio.options.baseUrl}';
-    }
-
-    if (e.response != null) {
-      return _extractErrorMessage(
-        e.response?.data,
-        defaultMessage,
-        statusCode: e.response?.statusCode,
-      );
-    }
-
-    return 'Network error: ${e.message}';
-  }
-
-  String _extractErrorMessage(
-    dynamic data,
-    String fallback, {
-    int? statusCode,
-  }) {
-    if (data == null) {
-      return statusCode != null ? '$fallback: $statusCode' : fallback;
-    }
-
-    if (data is String) {
-      final trimmed = data.trim();
-      if (trimmed.isNotEmpty) return trimmed;
-    }
-
-    if (data is Map) {
-      final keys = ['message', 'Message', 'error', 'Error', 'detail', 'title'];
-      for (final key in keys) {
-        final value = data[key];
-        if (value is String && value.trim().isNotEmpty) {
-          return value.trim();
-        }
-      }
-
-      final errors = data['errors'];
-      if (errors is Map) {
-        final messages = <String>[];
-        errors.forEach((_, value) {
-          if (value is List) {
-            messages.addAll(value.whereType<String>());
-          } else if (value is String) {
-            messages.add(value);
-          }
-        });
-        if (messages.isNotEmpty) {
-          return messages.join(', ');
-        }
-      }
-    }
-
-    return statusCode != null ? '$fallback: $statusCode' : fallback;
-  }
 
   dynamic _normalizeResponseData(dynamic data) {
     if (data is String) {

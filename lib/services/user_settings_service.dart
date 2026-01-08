@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'api_client.dart';
+import '../utils/dio_error_formatter.dart';
 import '../models/user_settings.dart';
 
 class UserSettingsService {
@@ -17,7 +18,7 @@ class UserSettingsService {
 
       return UserSettings.fromJson(response.data);
     } on DioException catch (e) {
-      throw _handleError(e);
+      throw Exception(DioErrorFormatter.format(e));
     }
   }
 
@@ -39,14 +40,7 @@ class UserSettingsService {
 
       return UserSettings.fromJson(response.data['settings']);
     } on DioException catch (e) {
-      throw _handleError(e);
+      throw DioErrorFormatter.format(e);
     }
-  }
-
-  String _handleError(DioException e) {
-    if (e.response != null) {
-      return e.response?.data['error'] ?? 'Unknown error';
-    }
-    return e.message ?? 'Network error';
   }
 }
