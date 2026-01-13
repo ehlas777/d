@@ -1,0 +1,4 @@
+/Users/ykylas/Downloads/Qaznat_VT-1-main/plugins/whisper_flutter_new/android/.cxx/Release/6h4p6c30/armeabi-v7a/CMakeFiles/whisper_flutter.dir
+/Users/ykylas/Downloads/Qaznat_VT-1-main/plugins/whisper_flutter_new/android/.cxx/Release/6h4p6c30/armeabi-v7a/CMakeFiles/whisper.dir
+/Users/ykylas/Downloads/Qaznat_VT-1-main/plugins/whisper_flutter_new/android/.cxx/Release/6h4p6c30/armeabi-v7a/CMakeFiles/edit_cache.dir
+/Users/ykylas/Downloads/Qaznat_VT-1-main/plugins/whisper_flutter_new/android/.cxx/Release/6h4p6c30/armeabi-v7a/CMakeFiles/rebuild_cache.dir

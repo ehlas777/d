@@ -171,9 +171,20 @@ class PlatformPaymentRouter {
           );
         } catch (e) {
           print('IAP purchase error: $e');
+          
+          // Provide more helpful error message for product not found
+          String userMessage = 'Purchase error: $e';
+          if (e.toString().contains('Product not found')) {
+            userMessage = 'Unable to load subscription products.\n\n'
+                'This usually means:\n'
+                '• Products need to be configured in App Store Connect\n'
+                '• Agreements and banking info must be completed\n\n'
+                'Please contact support if this issue persists.';
+          }
+          
           return PaymentResult(
             success: false,
-            message: 'Purchase error: $e',
+            message: userMessage,
           );
         }
       } else {

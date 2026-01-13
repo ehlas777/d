@@ -1,4 +1,6 @@
 import 'dart:io';
+
+import '../config/iap_config.dart';
 import '../models/payment_models.dart';
 import 'api_client.dart';
 
@@ -13,8 +15,10 @@ class SubscriptionApiService {
   /// Returns platform-specific products based on current platform
   Future<List<SubscriptionPlan>> getProducts({String languageCode = 'en'}) async {
     try {
-      final platform = Platform.isIOS || Platform.isMacOS ? 'ios' : Platform.isAndroid ? 'android' : 'web';
-      
+      final platform = (Platform.isIOS || Platform.isMacOS)
+          ? 'ios'
+          : (Platform.isAndroid ? 'android' : 'web');
+
       final response = await apiClient.get(
         '/api/subscription/products',
         queryParameters: {
@@ -29,9 +33,8 @@ class SubscriptionApiService {
         return _getMockProducts(languageCode);
       }
 
-      final dynamic productsData = response.data is Map 
-          ? response.data['products'] 
-          : response.data;
+      final dynamic productsData =
+          response.data is Map ? response.data['products'] : response.data;
 
       if (productsData == null || productsData is! List) {
         print('No products data found in response, using mock data');
@@ -39,7 +42,9 @@ class SubscriptionApiService {
       }
 
       final List<dynamic> data = productsData;
-      return data.map((json) => SubscriptionPlan.fromJson(json as Map<String, dynamic>)).toList();
+      return data
+          .map((json) => SubscriptionPlan.fromJson(json as Map<String, dynamic>))
+          .toList();
     } catch (e) {
       print('Error fetching products from backend: $e');
       print('Using mock products as fallback');
@@ -101,7 +106,7 @@ class SubscriptionApiService {
   Future<Subscription?> getCurrentSubscription() async {
     try {
       final response = await apiClient.get('/api/subscription/current');
-      
+
       if (response.data == null || response.data is String) {
         print('No active subscription found');
         return null;
@@ -126,9 +131,13 @@ class SubscriptionApiService {
   }
 
   /// Mock products for development/testing when backend is not available
+  /// IMPORTANT:
+  /// - iOS-та әзірге тек Standard қайтарылады (Pro ASC-та Developer Action Needed).
+  /// - Android-та Standard + Pro екеуі де қайтарылады.
   List<SubscriptionPlan> _getMockProducts(String languageCode) {
-    final platform = Platform.isIOS || Platform.isMacOS ? 'ios' : Platform.isAndroid ? 'android' : 'web';
-    
+    final isIOS = Platform.isIOS || Platform.isMacOS;
+    final platform = isIOS ? 'ios' : (Platform.isAndroid ? 'android' : 'web');
+
     // Localization maps
     final Map<String, Map<String, dynamic>> localizedData = {
       'kk': {
@@ -201,7 +210,6 @@ class SubscriptionApiService {
           ]
         },
       },
-      // Default English
       'en': {
         'standard': {
           'name': 'Standard',
@@ -239,10 +247,9 @@ class SubscriptionApiService {
       },
     };
 
-    // Fallback to English if language not found
     final texts = localizedData[languageCode] ?? localizedData['en']!;
 
-    return [
+    final plans = <SubscriptionPlan>[
       SubscriptionPlan(
         id: 'standard',
         name: texts['standard']!['name'],
@@ -251,22 +258,30 @@ class SubscriptionApiService {
         currency: 'USD',
         interval: 'month',
         features: texts['standard']!['features'],
-        productId: platform == 'ios' 
-            ? 'com.qaznat.polydub.subscription.standard'
-            : 'polydub_standard_monthly',
-      ),
-      SubscriptionPlan(
-        id: 'pro',
-        name: texts['pro']!['name'],
-        description: texts['pro']!['description'],
-        price: 9.99,
-        currency: 'USD',
-        interval: 'month',
-        features: texts['pro']!['features'],
         productId: platform == 'ios'
-            ? 'com.qaznat.polydub.subscription.pro'
-            : 'polydub_pro_monthly',
+            ? IAPConfig.iosProductIdStandard
+            : IAPConfig.androidProductIdStandard,
       ),
     ];
+
+    // iOS-та Pro әзірге жоқ (Developer Action Needed), Android-та ғана береміз
+    if (!isIOS) {
+      plans.add(
+        SubscriptionPlan(
+          id: 'pro',
+          name: texts['pro']!['name'],
+          description: texts['pro']!['description'],
+          price: 9.99,
+          currency: 'USD',
+          interval: 'month',
+          features: texts['pro']!['features'],
+          productId: platform == 'ios'
+              ? IAPConfig.iosProductIdPro
+              : IAPConfig.androidProductIdPro,
+        ),
+      );
+    }
+
+    return plans;
   }
 }
